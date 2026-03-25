@@ -2,8 +2,57 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { Redis } from "@upstash/redis";
-import { ethers } from "ethers";
+
+class RestRedis {
+  constructor({ url, token }) {
+    this.url = String(url || "").replace(/\/+$/, "");
+    this.token = String(token || "").trim();
+  }
+
+  async command(args) {
+    const res = await fetch(this.url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) throw new Error(`Upstash command failed (${res.status})`);
+    const json = await res.json().catch(() => null);
+    if (json && json.error) throw new Error(`Upstash error: ${json.error}`);
+    return json?.result;
+  }
+
+  parseMaybeJson(value) {
+    if (typeof value !== "string") return value;
+    const t = value.trim();
+    if (!t) return value;
+    if ((t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))) {
+      try {
+        return JSON.parse(t);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+
+  async get(key) {
+    const v = await this.command(["GET", key]);
+    return this.parseMaybeJson(v);
+  }
+
+  async smembers(key) {
+    const v = await this.command(["SMEMBERS", key]);
+    return Array.isArray(v) ? v : [];
+  }
+
+  async keys(pattern) {
+    const v = await this.command(["KEYS", pattern]);
+    return Array.isArray(v) ? v : [];
+  }
+}
 
 function loadDotEnvLocal() {
   const envPath = path.join(process.cwd(), ".env.local");
@@ -49,7 +98,28 @@ function jsonAttr(trait_type, value) {
   return { trait_type, value };
 }
 
-function buildMetadata(build, tokenId, appBaseUrl) {
+function buildAnimationUrl(tokenId) {
+  return `./${tokenId}.html`;
+}
+
+function resolveAppBaseUrl() {
+  const explicit =
+    process.env.APP_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.NEXT_PUBLIC_APP_ORIGIN ||
+    "";
+  if (explicit) return String(explicit).replace(/\/+$/, "");
+
+  const vercelProd = String(process.env.VERCEL_PROJECT_PRODUCTION_URL || "").trim();
+  if (vercelProd) return `https://${vercelProd.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`;
+
+  const vercelUrl = String(process.env.VERCEL_URL || "").trim();
+  if (vercelUrl) return `https://${vercelUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`;
+
+  return "";
+}
+
+function buildMetadata(build, tokenId, appBaseUrl, imagesCid) {
   const kind = Number(build?.kind ?? 0);
   const kindLabel = kind === 0 ? "Brick" : kind === 2 ? "Collectors Edition" : "Build";
   const w = Number(build?.brickWidth ?? build?.baseWidth ?? 1);
@@ -92,14 +162,160 @@ function buildMetadata(build, tokenId, appBaseUrl) {
     attributes.push(jsonAttr("componentCounts", componentCounts.join(",")));
   }
 
+  const imageFromBuild = String(build?.ipfsImageUri || "").trim();
+  const usableBuildImage =
+    imageFromBuild && !/\.svg(\?.*)?$/i.test(imageFromBuild) ? imageFromBuild : "";
+  const image = usableBuildImage
+    ? usableBuildImage
+    : appBaseUrl
+      ? `${appBaseUrl}/api/builds/image/${tokenId}`
+      : imagesCid
+        ? `ipfs://${imagesCid}/${tokenId}.png`
+        : `https://ethblox-app-delta.vercel.app/api/builds/image/${tokenId}`;
+  const externalUrl = appBaseUrl ? `${appBaseUrl}/explore/${tokenId}` : undefined;
+
   return {
     name,
     description: `BASEBLOX ${kindLabel} - ${w}x${d} density ${density}`,
-    image: `${appBaseUrl}/api/builds/image/${tokenId}`,
-    animation_url: `${appBaseUrl}/viewer/${tokenId}`,
-    external_url: `${appBaseUrl}/explore/${tokenId}`,
+    image,
+    ...(externalUrl ? { external_url: externalUrl } : {}),
     attributes,
   };
+}
+
+function buildTokenHtml(tokenId) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BASEBLOX #${tokenId}</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b183a; color: #dbeafe; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    #app { width: 100%; height: 100%; position: relative; overflow: hidden; }
+    #hud { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 10; display: flex; justify-content: space-between; gap: 8px; pointer-events: none; }
+    .pill { background: rgba(15,23,42,.72); border: 1px solid rgba(148,163,184,.35); border-radius: 8px; padding: 4px 8px; font-size: 12px; }
+    #msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #93c5fd; }
+    canvas { display:block; }
+  </style>
+  <script src="./three.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="hud">
+      <div class="pill" id="name">BASEBLOX #${tokenId}</div>
+      <div class="pill" id="stats">Loading...</div>
+    </div>
+    <div id="msg">Loading metadata...</div>
+  </div>
+  <script>
+    (async () => {
+      const app = document.getElementById("app");
+      const msg = document.getElementById("msg");
+      const nameEl = document.getElementById("name");
+      const statsEl = document.getElementById("stats");
+      let meta = null;
+      try {
+        const r = await fetch("./${tokenId}.json", { cache: "no-store" });
+        if (!r.ok) throw new Error("metadata " + r.status);
+        meta = await r.json();
+      } catch (e) {
+        msg.textContent = "Metadata unavailable";
+        console.error(e);
+        return;
+      }
+      nameEl.textContent = meta.name || "BASEBLOX #${tokenId}";
+      const attrs = {};
+      for (const a of (meta.attributes || [])) {
+        if (!a || typeof a !== "object") continue;
+        attrs[String(a.trait_type || "")] = a.value;
+      }
+      const kind = Number(attrs.kindId ?? 1);
+      const width = Math.max(1, Number(attrs.width ?? 1));
+      const depth = Math.max(1, Number(attrs.depth ?? 1));
+      const mass = Number(attrs.mass ?? (width * depth));
+      const density = Number(attrs.density ?? 1);
+      statsEl.textContent = "kind=" + kind + " | " + width + "x" + depth + " | mass=" + mass + " | d=" + density;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0b183a);
+      const camera = new THREE.PerspectiveCamera(45, app.clientWidth / app.clientHeight, 0.1, 1000);
+      camera.position.set(8, 6, 8);
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setSize(app.clientWidth, app.clientHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      app.appendChild(renderer.domElement);
+
+      scene.add(new THREE.HemisphereLight(0xdbeafe, 0x0b183a, 1.1));
+      const key = new THREE.DirectionalLight(0xffffff, 1.15);
+      key.position.set(6, 10, 6);
+      scene.add(key);
+
+      const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(50, 50),
+        new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.95, metalness: 0.05 })
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.y = -0.501;
+      scene.add(floor);
+
+      function addBrick(w, d, color = 0x2563eb) {
+        const body = new THREE.Mesh(
+          new THREE.BoxGeometry(w, 1, d),
+          new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.15 })
+        );
+        scene.add(body);
+        const studGeom = new THREE.SphereGeometry(0.2, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+        const studMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.35, metalness: 0.1 });
+        for (let x = 0; x < w; x++) {
+          for (let z = 0; z < d; z++) {
+            const s = new THREE.Mesh(studGeom, studMat);
+            s.position.set(-w / 2 + x + 0.5, 0.5, -d / 2 + z + 0.5);
+            scene.add(s);
+          }
+        }
+      }
+      function addBuildCluster(m) {
+        const n = Math.max(6, Math.min(90, Math.round(m / 2)));
+        const g = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x60a5fa, roughness: 0.4, metalness: 0.08, transparent: true, opacity: 0.95 });
+        for (let i = 0; i < n; i++) {
+          const b = new THREE.Mesh(g, mat);
+          b.position.set((Math.random()-0.5)*5.5, (Math.random()-0.1)*2.5, (Math.random()-0.5)*5.5);
+          scene.add(b);
+        }
+      }
+      if (kind === 0) addBrick(width, depth);
+      else addBuildCluster(mass);
+
+      const box = new THREE.Box3().setFromObject(scene);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      scene.position.sub(center);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      camera.position.set(maxDim * 1.4, maxDim * 1.1, maxDim * 1.5);
+      camera.lookAt(0, 0, 0);
+      msg.remove();
+
+      let t = 0;
+      function animate() {
+        t += 0.0055;
+        camera.position.x = Math.cos(t) * (maxDim * 1.8);
+        camera.position.z = Math.sin(t) * (maxDim * 1.8);
+        camera.lookAt(0, 0, 0);
+        renderer.render(scene, camera);
+        requestAnimationFrame(animate);
+      }
+      animate();
+      window.addEventListener("resize", () => {
+        camera.aspect = app.clientWidth / app.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(app.clientWidth, app.clientHeight);
+      });
+    })();
+  </script>
+</body>
+</html>`;
 }
 
 function parseIpfsAddResponse(text) {
@@ -152,15 +368,49 @@ async function postWithRetry(url, makeRequest, options = {}) {
   throw lastErr || new Error("request failed");
 }
 
-function makeMetadataFormData(outDir, fileNames) {
+function makeMetadataFormData(outDir, fileNames, rootDirName) {
   const formData = new FormData();
-  formData.append("pinataOptions", JSON.stringify({ wrapWithDirectory: true }));
+  formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }));
   for (const fileName of fileNames) {
     const fullPath = path.join(outDir, fileName);
     const body = fs.readFileSync(fullPath);
-    formData.append("file", new Blob([body], { type: "application/json" }), fileName);
+    const isHtml = fileName.endsWith(".html");
+    const isJs = fileName.endsWith(".js");
+    const contentType = isHtml ? "text/html" : isJs ? "text/javascript" : "application/json";
+    formData.append("file", new Blob([body], { type: contentType }), `${rootDirName}/${fileName}`);
   }
   return formData;
+}
+
+async function collectTokenIdsFromRedisFallback(redis, style, from, to) {
+  const out = new Set();
+
+  // token:<id> -> buildId mappings
+  const tokenKeys = await redis.keys(style.token("*"));
+  for (const key of tokenKeys || []) {
+    const m = String(key).match(/token:(\d+)$/);
+    if (!m) continue;
+    const id = Number(m[1]);
+    if (!Number.isFinite(id)) continue;
+    if (id < from) continue;
+    if (to != null && id > to) continue;
+    out.add(id);
+  }
+
+  // build:* objects with tokenId fields
+  const buildKeys = await redis.keys(style.build("*"));
+  for (const key of buildKeys || []) {
+    if (String(key).includes("build:token:") || String(key).includes("build:hash:")) continue;
+    const build = await redis.get(key);
+    if (!build || typeof build !== "object") continue;
+    const id = Number(build.tokenId);
+    if (!Number.isFinite(id)) continue;
+    if (id < from) continue;
+    if (to != null && id > to) continue;
+    out.add(id);
+  }
+
+  return [...out].sort((a, b) => a - b);
 }
 
 async function main() {
@@ -169,7 +419,8 @@ async function main() {
 
   const chainId = String(process.env.NEXT_PUBLIC_CHAIN_ID || "84532");
   const redisPrefix = process.env.REDIS_KEY_PREFIX || "";
-  const appBaseUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_APP_ORIGIN || "https://ethblox.art").replace(/\/+$/, "");
+  const appBaseUrl = resolveAppBaseUrl();
+  const imagesCid = (process.env.NEXT_PUBLIC_IMAGES_CID || process.env.IMAGES_CID || "").trim();
 
   const buildNft = process.env.NEXT_PUBLIC_BUILDNFT_ADDRESS;
   const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || process.env.NEXT_PUBLIC_RPC_URL;
@@ -187,14 +438,12 @@ async function main() {
   const kvToken = process.env.KV_REST_API_TOKEN;
 
   if (!kvUrl || !kvToken) throw new Error("Missing KV_REST_API_URL / KV_REST_API_TOKEN");
-  if (!buildNft) throw new Error("Missing NEXT_PUBLIC_BUILDNFT_ADDRESS");
-  if (!rpcUrl) throw new Error("Missing BASE_SEPOLIA_RPC_URL / NEXT_PUBLIC_RPC_URL");
   if (!ipfsApiToken && !args.dryRun) throw new Error("Missing PINATA_JWT (or LIGHTHOUSE_API_KEY)");
   if (!args.dryRun && ipfsApiToken && String(ipfsApiToken).split(".").length !== 3) {
     throw new Error("PINATA_JWT is malformed (expected 3 JWT segments)");
   }
 
-  const redis = new Redis({ url: kvUrl, token: kvToken });
+  const redis = new RestRedis({ url: kvUrl, token: kvToken });
   const keyStyleA = {
     minted: `ethblox:${chainId}:minted_tokens`,
     token: (id) => `ethblox:${chainId}:token:${id}`,
@@ -219,10 +468,34 @@ async function main() {
     .filter((v) => v >= args.from && (args.to == null || v <= args.to))
     .sort((a, b) => a - b);
 
+  if (tokenIds.length === 0) {
+    const fallbackForStyle = await collectTokenIdsFromRedisFallback(
+      redis,
+      style,
+      args.from,
+      args.to,
+    );
+    if (fallbackForStyle.length > 0) {
+      tokenIds.push(...fallbackForStyle);
+    } else {
+      const alternate = style === keyStyleA ? keyStyleB : keyStyleA;
+      const fallbackAlternate = await collectTokenIdsFromRedisFallback(
+        redis,
+        alternate,
+        args.from,
+        args.to,
+      );
+      if (fallbackAlternate.length > 0) {
+        style = alternate;
+        tokenIds.push(...fallbackAlternate);
+      }
+    }
+  }
+
   if (tokenIds.length === 0) throw new Error("No minted tokens found in selected range");
 
   const runLabel = new Date().toISOString().replace(/[:.]/g, "-");
-  const outDir = args.outDir || path.join(process.cwd(), "data", "metadata-batch", runLabel);
+  const outDir = args.outDir || path.join("/tmp", "metadata-batch", runLabel);
   fs.mkdirSync(outDir, { recursive: true });
 
   let written = 0;
@@ -231,7 +504,7 @@ async function main() {
     if (!buildId) continue;
     const build = await redis.get(style.build(String(buildId)));
     if (!build || typeof build !== "object") continue;
-    const metadata = buildMetadata(build, String(tokenId), appBaseUrl);
+    const metadata = buildMetadata(build, String(tokenId), appBaseUrl, imagesCid);
     fs.writeFileSync(path.join(outDir, `${tokenId}.json`), JSON.stringify(metadata, null, 2));
     written++;
   }
@@ -244,7 +517,8 @@ async function main() {
     return;
   }
 
-  const fileNames = fs.readdirSync(outDir).filter((f) => f.endsWith(".json")).sort((a, b) => Number(a.split(".")[0]) - Number(b.split(".")[0]));
+  const rootDirName = path.basename(outDir);
+  const fileNames = fs.readdirSync(outDir).filter((f) => f.endsWith(".json")).sort();
   const uploadRes = await postWithRetry(
     ipfsUploadUrl,
     async ({ timeoutMs }) => {
@@ -254,7 +528,7 @@ async function main() {
         return await fetch(ipfsUploadUrl, {
           method: "POST",
           headers: { Authorization: `Bearer ${ipfsApiToken}` },
-          body: makeMetadataFormData(outDir, fileNames),
+          body: makeMetadataFormData(outDir, fileNames, rootDirName),
           signal: controller.signal,
         });
       } finally {
@@ -267,9 +541,9 @@ async function main() {
   const parsed = parseIpfsAddResponse(rawText);
   if (!parsed.folderCid) throw new Error(`Could not parse folder CID from IPFS response: ${rawText}`);
   const folderCid = parsed.folderCid;
-  const baseUri = `ipfs://${folderCid}`;
+  const baseUri = `ipfs://${folderCid}/${rootDirName}`;
   console.log(`Uploaded metadata folder CID: ${folderCid}`);
-  console.log(`Gateway URL: ${pinataGatewayBase}/${folderCid}`);
+  console.log(`Gateway URL: ${pinataGatewayBase}/${folderCid}/${rootDirName}`);
   console.log(`Base URI candidate: ${baseUri}`);
 
   if (!args.setBase) {
@@ -277,7 +551,10 @@ async function main() {
     return;
   }
 
+  if (!buildNft) throw new Error("Missing NEXT_PUBLIC_BUILDNFT_ADDRESS");
+  if (!rpcUrl) throw new Error("Missing BASE_SEPOLIA_RPC_URL / NEXT_PUBLIC_RPC_URL");
   if (!ownerPk) throw new Error("Missing PRIVATE_KEY (or BASE_TOKEN_URI_OWNER_KEY) for --set-base");
+  const { ethers } = await import("ethers");
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new ethers.Wallet(ownerPk, provider);
   const contract = new ethers.Contract(buildNft, ["function owner() view returns (address)", "function setBaseTokenURI(string)"], wallet);

@@ -6,19 +6,30 @@ import { normalizeBrickKey } from "@/data/bricks"
 import { rk } from "@/lib/redis-keys"
 import type { Build } from "@/lib/types"
 import { CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { buildAnimationUrl } from "@/lib/animation-url"
+import { attemptMarketplacePublish, markMarketplacePending } from "@/lib/marketplace-sync"
 
-const IPFS_API_TOKEN = process.env.PINATA_JWT || process.env.LIGHTHOUSE_API_KEY
+export const runtime = "nodejs"
+
+const env = (k: string) => (process.env[k] || "").trim()
+
+const IPFS_API_TOKEN = env("PINATA_JWT") || env("LIGHTHOUSE_API_KEY")
 const IPFS_UPLOAD_URL =
-  process.env.IPFS_UPLOAD_URL ||
-  process.env.LIGHTHOUSE_UPLOAD_URL ||
+  env("IPFS_UPLOAD_URL") ||
+  env("LIGHTHOUSE_UPLOAD_URL") ||
   "https://api.pinata.cloud/pinning/pinFileToIPFS"
-const IPFS_GATEWAY_BASE = process.env.PINATA_GATEWAY_BASE || "https://gateway.pinata.cloud/ipfs"
-const IPFS_UPLOAD_TIMEOUT_MS = Number(process.env.IPFS_UPLOAD_TIMEOUT_MS || "25000")
-const IPFS_UPLOAD_RETRIES = Number(process.env.IPFS_UPLOAD_RETRIES || "4")
-const AUTO_IPFS_PUSH_ON_MINT = process.env.AUTO_IPFS_PUSH_ON_MINT === "1"
-const AUTO_SET_BASE_TOKEN_URI_ON_MINT = process.env.AUTO_SET_BASE_TOKEN_URI_ON_MINT === "1"
-const BASE_TOKEN_URI_TARGET = process.env.BASE_TOKEN_URI_TARGET || process.env.NEXT_PUBLIC_BASE_METADATA_URI || ""
-const BASE_TOKEN_URI_OWNER_KEY = process.env.BASE_TOKEN_URI_OWNER_KEY || process.env.PRIVATE_KEY || ""
+const IPFS_GATEWAY_BASE = env("PINATA_GATEWAY_BASE") || "https://gateway.pinata.cloud/ipfs"
+const IPFS_UPLOAD_TIMEOUT_MS = Number(env("IPFS_UPLOAD_TIMEOUT_MS") || "25000")
+const IPFS_UPLOAD_RETRIES = Number(env("IPFS_UPLOAD_RETRIES") || "4")
+const AUTO_IPFS_PUSH_ON_MINT = env("AUTO_IPFS_PUSH_ON_MINT") === "1"
+const MINT_REQUIRES_IPFS_SYNC =
+  (env("MINT_REQUIRES_IPFS_SYNC") || "1") === "1" && AUTO_IPFS_PUSH_ON_MINT
+const AUTO_SET_BASE_TOKEN_URI_ON_MINT = env("AUTO_SET_BASE_TOKEN_URI_ON_MINT") === "1"
+const BASE_TOKEN_URI_TARGET = env("BASE_TOKEN_URI_TARGET") || env("NEXT_PUBLIC_BASE_METADATA_URI") || ""
+const BASE_TOKEN_URI_OWNER_KEY = env("BASE_TOKEN_URI_OWNER_KEY") || env("PRIVATE_KEY") || ""
+const ENABLE_ANIMATION_URL = env("ENABLE_ANIMATION_URL") === "1"
+const REQUIRE_CAPTURE_IMAGE_ON_MINT = (env("REQUIRE_CAPTURE_IMAGE_ON_MINT") || "1") === "1"
+const AUTO_MARKETPLACE_PUBLISH_ON_MINT = (env("AUTO_MARKETPLACE_PUBLISH_ON_MINT") || "1") === "1"
 
 const CHAIN_READ_ABI = [
   "function nextTokenId() view returns (uint256)",
@@ -26,6 +37,60 @@ const CHAIN_READ_ABI = [
   "function kindOf(uint256 tokenId) view returns (uint8)",
   "function brickSpecOf(uint256 tokenId) view returns (uint8 width, uint8 depth, uint16 density)",
 ]
+const CAPTURE_KEY = (tokenId: string) => rk(`ipfs:capture:${tokenId}`)
+const PREFLIGHT_KEY = (buildHash: string) => rk(`ipfs:preflight:${buildHash.toLowerCase()}`)
+
+async function safeRedisGet<T = any>(key: string): Promise<T | null> {
+  try {
+    return await redis.get<T>(key)
+  } catch {
+    return null
+  }
+}
+
+async function safeRedisSet(key: string, value: any): Promise<boolean> {
+  try {
+    await redis.set(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function safeRedisSadd(key: string, value: string): Promise<boolean> {
+  try {
+    await redis.sadd(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function safeRedisDel(key: string): Promise<boolean> {
+  try {
+    await redis.del(key)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function readBrickKeyForToken(
+  contract: ethers.Contract,
+  tokenId: string | number | bigint,
+): Promise<string | null> {
+  try {
+    const tid = BigInt(String(tokenId))
+    const exists = Boolean(await contract.exists(tid))
+    if (!exists) return null
+    const kind = Number(await contract.kindOf(tid))
+    if (kind !== 0) return null
+    const [w, d, density] = await contract.brickSpecOf(tid)
+    return normalizeBrickKey(Number(w), Number(d), Number(density))
+  } catch {
+    return null
+  }
+}
 
 async function uploadToIpfsWithRetry(formDataFactory: () => FormData) {
   let lastError: Error | null = null
@@ -62,6 +127,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     const { tokenId, buildHash, txHash, walletAddress } = body
+    const screenshotDataUrl = typeof body.screenshotDataUrl === "string" ? body.screenshotDataUrl.trim() : ""
     if (!tokenId || !buildHash || !walletAddress) {
       return NextResponse.json(
         { error: "Missing required fields: tokenId, buildHash, walletAddress" },
@@ -69,11 +135,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (screenshotDataUrl.startsWith("data:image/")) {
+      // Persist capture separately so a later /api/builds/ipfs-push retry can reuse
+      // the exact preview PNG shown in mint UI.
+      await safeRedisSet(CAPTURE_KEY(String(tokenId)), screenshotDataUrl)
+    }
+
     const rawBricks = body.bricks || []
     const kind = body.kind ?? 0
     const brickW = body.brickWidth ?? body.baseWidth ?? 1
     const brickD = body.brickDepth ?? body.baseDepth ?? 1
-    const density = body.density
+    let density = body.density
     const area = Number(brickW) * Number(brickD)
     let canonicalComponentBuildIds = Array.isArray(body.componentBuildIds) ? body.componentBuildIds : []
     let canonicalComponentCounts = Array.isArray(body.componentCounts) ? body.componentCounts : []
@@ -81,6 +153,24 @@ export async function POST(request: NextRequest) {
 
     // ── Kind 0 (Brick) validation ──
     if (kind === 0) {
+      // Trust on-chain truth for just-minted brick spec when available.
+      // Some deployments normalize/override density internally (e.g. fixed 27).
+      try {
+        const provider = new ethers.JsonRpcProvider(RPC_URL)
+        const contract = new ethers.Contract(CONTRACTS.BUILD_NFT, CHAIN_READ_ABI, provider)
+        const tid = BigInt(String(tokenId))
+        const exists = Boolean(await contract.exists(tid))
+        if (exists) {
+          const onchainKind = Number(await contract.kindOf(tid))
+          if (onchainKind === 0) {
+            const [, , onchainDensity] = await contract.brickSpecOf(tid)
+            density = Number(onchainDensity)
+          }
+        }
+      } catch {
+        // Fallback to request payload density when on-chain read is unavailable.
+      }
+
       // Density is REQUIRED for bricks - never default to 1
       if (density === undefined || density === null) {
         return NextResponse.json(
@@ -99,35 +189,31 @@ export async function POST(request: NextRequest) {
       // a mint that already succeeded on-chain.
       const specKey = computeSpecKey(brickW, brickD, density)
       const brickKey = normalizeBrickKey(brickW, brickD, density)
-      const existingTokenId = await redis.get(rk(`brick:spec:${brickKey}`))
+      const existingTokenId = await safeRedisGet<string>(rk(`brick:spec:${brickKey}`))
       if (existingTokenId && String(existingTokenId) !== String(tokenId)) {
         const provider = new ethers.JsonRpcProvider(RPC_URL)
         const contract = new ethers.Contract(CONTRACTS.BUILD_NFT, CHAIN_READ_ABI, provider)
-        const existingId = BigInt(String(existingTokenId))
-        let redisIndexIsValidConflict = false
-        try {
-          const exists = Boolean(await contract.exists(existingId))
-          if (exists) {
-            const existingKind = Number(await contract.kindOf(existingId))
-            if (existingKind === 0) {
-              const [ew, ed, eden] = await contract.brickSpecOf(existingId)
-              const existingBrickKey = normalizeBrickKey(Number(ew), Number(ed), Number(eden))
-              redisIndexIsValidConflict = existingBrickKey === brickKey
-            }
-          }
-        } catch {
-          redisIndexIsValidConflict = false
-        }
+        const [existingBrickKey, submittedBrickKey] = await Promise.all([
+          readBrickKeyForToken(contract, existingTokenId),
+          readBrickKeyForToken(contract, tokenId),
+        ])
 
-        if (redisIndexIsValidConflict) {
+        const redisIndexIsValidConflict = existingBrickKey === brickKey
+        const submittedTokenOwnsSpec = submittedBrickKey === brickKey
+
+        // /api/builds/mint is called after tx confirmation. If the submitted token
+        // already owns this spec on-chain, treat Redis as stale and self-heal.
+        if (submittedTokenOwnsSpec) {
+          await safeRedisSet(rk(`brick:spec:${brickKey}`), String(tokenId))
+        } else if (redisIndexIsValidConflict) {
           return NextResponse.json(
             { error: `Brick ${brickKey} already minted as token #${existingTokenId}`, specKey },
             { status: 409 },
           )
+        } else {
+          // Redis mapping is stale/inconsistent for this spec; clear and continue.
+          await safeRedisDel(rk(`brick:spec:${brickKey}`))
         }
-
-        // Redis mapping is stale/inconsistent for this spec; clear and continue.
-        await redis.del(rk(`brick:spec:${brickKey}`))
       }
 
       // Component model for kind=0:
@@ -270,9 +356,9 @@ export async function POST(request: NextRequest) {
 
       // Build type info
       kind: body.kind,
-      density: body.density,
-      brickWidth: body.brickWidth,
-      brickDepth: body.brickDepth,
+      density: kind === 0 ? Number(density ?? 1) : body.density,
+      brickWidth: kind === 0 ? Number(brickW) : body.brickWidth,
+      brickDepth: kind === 0 ? Number(brickD) : body.brickDepth,
 
       // Composition (which NFTs are used inside this build)
       composition: canonicalComposition,
@@ -294,30 +380,145 @@ export async function POST(request: NextRequest) {
     }
 
     // Save full build data
-    await redis.set(rk(`build:${mintedBuild.id}`), mintedBuild)
+    await safeRedisSet(rk(`build:${mintedBuild.id}`), mintedBuild)
 
     // Reverse lookups
-    await redis.set(rk(`token:${tokenId}`), mintedBuild.id)
-    await redis.set(rk(`hash:${buildHash}`), mintedBuild.id)
+    await safeRedisSet(rk(`token:${tokenId}`), mintedBuild.id)
+    await safeRedisSet(rk(`hash:${buildHash}`), mintedBuild.id)
 
     // Brick spec reverse index (for duplicate detection)
     if (kind === 0) {
       const brickKey = normalizeBrickKey(brickW, brickD, density ?? 1)
-      await redis.set(rk(`brick:spec:${brickKey}`), tokenId)
+      await safeRedisSet(rk(`brick:spec:${brickKey}`), tokenId)
     }
 
     // Add to global minted set
-    await redis.sadd(rk("minted_tokens"), tokenId)
+    await safeRedisSadd(rk("minted_tokens"), tokenId)
 
     let ipfs: { cid: string; gatewayUrl: string } | null = null
     if (AUTO_IPFS_PUSH_ON_MINT && IPFS_API_TOKEN) {
       try {
+        const fileName = `${tokenId}.json`
+
+        // 1) Upload real rendered image first; fallback to deterministic SVG.
+        let uploadedImageCid = ""
+        let uploadedImagePath = `${tokenId}.png`
+        try {
+          const preflight = await safeRedisGet<{ imageCid?: string; imagePath?: string; imageUri?: string }>(PREFLIGHT_KEY(String(buildHash)))
+          if (preflight?.imageCid) {
+            uploadedImageCid = String(preflight.imageCid)
+            if (preflight?.imagePath) uploadedImagePath = String(preflight.imagePath)
+          }
+        } catch {
+          // continue with normal image upload flow
+        }
+        if (screenshotDataUrl.startsWith("data:image/")) {
+          try {
+            const m = screenshotDataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
+            if (m) {
+              const mime = m[1].toLowerCase()
+              const base64 = m[2]
+              const bytes = Buffer.from(base64, "base64")
+              if (bytes.length > 0) {
+                const ext =
+                  mime.includes("png")
+                    ? "png"
+                    : mime.includes("jpeg") || mime.includes("jpg")
+                      ? "jpg"
+                      : mime.includes("webp")
+                        ? "webp"
+                        : "png"
+                const imageUploadRes = await uploadToIpfsWithRetry(() => {
+                  const formData = new FormData()
+                  formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+                  const blob = new Blob([bytes], { type: mime })
+                  uploadedImagePath = `${tokenId}.${ext}`
+                  formData.append("file", blob, uploadedImagePath)
+                  return formData
+                })
+                const imageUploadData = await imageUploadRes.json()
+                uploadedImageCid = imageUploadData.IpfsHash || imageUploadData.Hash || ""
+              }
+            }
+          } catch {
+            // Continue to other image sources.
+          }
+        }
+        try {
+          if (!uploadedImageCid) {
+            const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://baseblox-app.vercel.app").replace(/\/+$/, "")
+            const imageEndpoint = `${appBaseUrl}/api/builds/image/${tokenId}`
+            const imageRes = await fetch(imageEndpoint, { redirect: "follow" })
+            if (imageRes.ok) {
+              const bytes = await imageRes.arrayBuffer()
+              if (bytes.byteLength > 0) {
+                const contentType = (imageRes.headers.get("content-type") || "").toLowerCase()
+                const ext = contentType.includes("png")
+                  ? "png"
+                  : contentType.includes("jpeg") || contentType.includes("jpg")
+                    ? "jpg"
+                    : contentType.includes("webp")
+                      ? "webp"
+                      : "png"
+                const imageUploadRes = await uploadToIpfsWithRetry(() => {
+                  const formData = new FormData()
+                  formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+                  const blob = new Blob([bytes], { type: contentType || "image/png" })
+                  uploadedImagePath = `${tokenId}.${ext}`
+                  formData.append("file", blob, uploadedImagePath)
+                  return formData
+                })
+                const imageUploadData = await imageUploadRes.json()
+                uploadedImageCid = imageUploadData.IpfsHash || imageUploadData.Hash || ""
+              }
+            }
+          }
+        } catch {
+          // Fallback to deterministic SVG below.
+        }
+
+        if (!uploadedImageCid && REQUIRE_CAPTURE_IMAGE_ON_MINT) {
+          throw new Error("No captured PNG provided for mint IPFS image upload.")
+        }
+
+        if (!uploadedImageCid) {
+          const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://baseblox-app.vercel.app").replace(/\/+$/, "")
+          const fallbackPng = `${appBaseUrl}/baseblox-pass.png`
+          const fallbackRes = await fetch(fallbackPng, { redirect: "follow" })
+          if (!fallbackRes.ok) {
+            throw new Error("Fallback PNG fetch failed")
+          }
+          const bytes = await fallbackRes.arrayBuffer()
+          if (bytes.byteLength === 0) {
+            throw new Error("Fallback PNG is empty")
+          }
+          const imageName = `${tokenId}.png`
+          const imageUploadRes = await uploadToIpfsWithRetry(() => {
+            const formData = new FormData()
+            formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+            const blob = new Blob([bytes], { type: "image/png" })
+            formData.append("file", blob, imageName)
+            return formData
+          })
+          const imageUploadData = await imageUploadRes.json()
+          uploadedImageCid = imageUploadData.IpfsHash || imageUploadData.Hash || ""
+          uploadedImagePath = imageName
+        }
+
+        if (!uploadedImageCid) {
+          throw new Error("IPFS image upload response missing CID")
+        }
+        mintedBuild.ipfsImageUri = `ipfs://${uploadedImageCid}/${uploadedImagePath}`
+        mintedBuild.ipfsImageGatewayUrl = `${IPFS_GATEWAY_BASE}/${uploadedImageCid}/${uploadedImagePath}`
+
+        // 2) Upload metadata JSON that points at the image above.
         const metadata = buildMetadataFromBuild(mintedBuild)
         const metadataJson = JSON.stringify(metadata)
-        const fileName = `${tokenId}.json`
 
         const uploadRes = await uploadToIpfsWithRetry(() => {
           const formData = new FormData()
+          // Force directory wrapping so token URI shape is always ipfs://<cid>/<tokenId>.json
+          formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
           const blob = new Blob([metadataJson], { type: "application/json" })
           formData.append("file", blob, fileName)
           return formData
@@ -329,12 +530,12 @@ export async function POST(request: NextRequest) {
           if (cid) {
             ipfs = {
               cid,
-              gatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}`,
+              gatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}/${fileName}`,
             }
             mintedBuild.ipfsPending = false
             mintedBuild.ipfsCid = cid
-            mintedBuild.ipfsUri = `ipfs://${cid}`
-            mintedBuild.ipfsGatewayUrl = `${IPFS_GATEWAY_BASE}/${cid}`
+            mintedBuild.ipfsUri = `ipfs://${cid}/${fileName}`
+            mintedBuild.ipfsGatewayUrl = `${IPFS_GATEWAY_BASE}/${cid}/${fileName}`
             mintedBuild.ipfsSyncedAt = new Date().toISOString()
             mintedBuild.ipfsLastError = undefined
             mintedBuild.ipfsLastAttemptAt = mintedBuild.ipfsSyncedAt
@@ -361,11 +562,60 @@ export async function POST(request: NextRequest) {
     }
 
     // Persist final post-mint status including IPFS sync state.
-    await redis.set(rk(`build:${mintedBuild.id}`), mintedBuild)
+    await safeRedisSet(rk(`build:${mintedBuild.id}`), mintedBuild)
+
+    if (MINT_REQUIRES_IPFS_SYNC && (!ipfs || mintedBuild.ipfsPending)) {
+      const detail = mintedBuild.ipfsLastError ? ` Details: ${mintedBuild.ipfsLastError}` : ""
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Mint was confirmed, but IPFS metadata sync failed. Mint flow requires IPFS sync.${detail}`,
+          build: mintedBuild,
+          ipfs,
+          requiresIpfsSync: true,
+        },
+        { status: 500 },
+      )
+    }
 
     const uriCheck = await verifyAndOptionallyAlignTokenURI(String(tokenId))
+    let marketplacePublish: any = { ok: false, skipped: true }
+    let marketplaceStatus: any = null
+    if (AUTO_MARKETPLACE_PUBLISH_ON_MINT) {
+      const attempt = await attemptMarketplacePublish(String(tokenId), {
+        trigger: "mint",
+        immediateRetryOnFailure: true,
+      })
+      marketplaceStatus = attempt.status
+      marketplacePublish =
+        attempt.publish ||
+        {
+          ok: false,
+          queued: true,
+          reason: attempt.status.lastError || "marketplace retry queued",
+        }
+    } else {
+      marketplaceStatus = await markMarketplacePending(String(tokenId), "queued after mint", {
+        nextRetryMs: 0,
+      })
+      marketplacePublish = {
+        ok: false,
+        queued: true,
+        reason: "auto publish disabled; queued for cron",
+      }
+    }
 
-    return NextResponse.json({ success: true, build: mintedBuild, ipfs, uriCheck })
+    return NextResponse.json({
+      success: true,
+      build: mintedBuild,
+      ipfs,
+      uriCheck,
+      marketplacePublish,
+      marketplaceStatus,
+      marketplacePublishRequired:
+        AUTO_MARKETPLACE_PUBLISH_ON_MINT &&
+        !(marketplaceStatus?.state === "marketplace_live" || marketplacePublish?.ok),
+    })
   } catch (error) {
     console.error("Error saving mint data:", error)
     return NextResponse.json({ error: "Failed to save mint data" }, { status: 500 })
@@ -462,7 +712,9 @@ function buildMetadataFromBuild(build: Build) {
   const d = build.brickDepth ?? build.baseDepth ?? 1
   const density = build.density ?? 1
   const mass = build.mass ?? (w * d * density)
-  const appBaseUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_APP_ORIGIN || "https://ethblox.art").replace(/\/+$/, "")
+  const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://baseblox-app.vercel.app").replace(/\/+$/, "")
+  const imageFromBuild = String((build as any).ipfsImageUri || "").trim()
+  const imagesCid = env("NEXT_PUBLIC_IMAGES_CID") || env("IMAGES_CID")
   const normalizedName =
     build.name && String(build.name).trim().length > 0
       ? String(build.name).trim()
@@ -501,8 +753,8 @@ function buildMetadataFromBuild(build: Build) {
   return {
     name: normalizedName,
     description: `BASEBLOX ${kindLabel} - ${w}x${d} density ${density}`,
-    image: `${appBaseUrl}/api/builds/image/${tokenId}`,
-    animation_url: `${appBaseUrl}/viewer/${tokenId}`,
+    image: imageFromBuild || (imagesCid ? `ipfs://${imagesCid}/${tokenId}.png` : `${appBaseUrl}/api/builds/image/${tokenId}`),
+    ...(ENABLE_ANIMATION_URL ? { animation_url: buildAnimationUrl(tokenId, appBaseUrl) } : {}),
     external_url: `${appBaseUrl}/explore/${tokenId}`,
     attributes,
   }

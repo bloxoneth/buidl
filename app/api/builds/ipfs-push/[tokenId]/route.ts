@@ -4,17 +4,21 @@ import { redis } from "@/lib/redis"
 import { rk } from "@/lib/redis-keys"
 import type { Build } from "@/lib/types"
 import { CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { buildAnimationUrl } from "@/lib/animation-url"
 
-const IPFS_API_TOKEN = process.env.PINATA_JWT || process.env.LIGHTHOUSE_API_KEY
+const env = (k: string) => (process.env[k] || "").trim()
+
+const IPFS_API_TOKEN = env("PINATA_JWT") || env("LIGHTHOUSE_API_KEY")
 const IPFS_UPLOAD_URL =
-  process.env.IPFS_UPLOAD_URL ||
-  process.env.LIGHTHOUSE_UPLOAD_URL ||
+  env("IPFS_UPLOAD_URL") ||
+  env("LIGHTHOUSE_UPLOAD_URL") ||
   "https://api.pinata.cloud/pinning/pinFileToIPFS"
-const IPFS_GATEWAY_BASE = process.env.PINATA_GATEWAY_BASE || "https://gateway.pinata.cloud/ipfs"
-const IPFS_UPLOAD_TIMEOUT_MS = Number(process.env.IPFS_UPLOAD_TIMEOUT_MS || "25000")
-const IPFS_UPLOAD_RETRIES = Number(process.env.IPFS_UPLOAD_RETRIES || "4")
-const ADMIN_TOKEN = process.env.ADMIN_RESET_TOKEN
+const IPFS_GATEWAY_BASE = env("PINATA_GATEWAY_BASE") || "https://gateway.pinata.cloud/ipfs"
+const IPFS_UPLOAD_TIMEOUT_MS = Number(env("IPFS_UPLOAD_TIMEOUT_MS") || "25000")
+const IPFS_UPLOAD_RETRIES = Number(env("IPFS_UPLOAD_RETRIES") || "4")
+const ADMIN_TOKEN = env("ADMIN_RESET_TOKEN")
 const OWNER_AUTH_PREFIX = "BASEBLOX_IPFS_PUSH"
+const ENABLE_ANIMATION_URL = env("ENABLE_ANIMATION_URL") === "1"
 
 async function authorize(request: NextRequest, tokenId: string): Promise<string | null> {
   // Admin override
@@ -94,7 +98,7 @@ export async function GET(
     return NextResponse.json({ error: authError }, { status: 401 })
   }
 
-  const metadata = await buildMetadataForToken(tokenId)
+  const metadata = await buildMetadataForToken(tokenId, request)
   if (!metadata) {
     return NextResponse.json({ error: "No app data found for token" }, { status: 404 })
   }
@@ -119,18 +123,86 @@ export async function POST(
     )
   }
 
-    const metadata = await buildMetadataForToken(tokenId)
+    const metadata = await buildMetadataForToken(tokenId, request)
     if (!metadata) {
       return NextResponse.json({ error: "No app data found for token" }, { status: 404 })
   }
 
   try {
+    // Upload token image first so metadata always points to a valid IPFS image URI.
+    let imageCid = ""
+    let imagePath = `${tokenId}.png`
+    try {
+      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://baseblox-app.vercel.app").replace(/\/+$/, "")
+      const imageEndpoint = `${appBaseUrl}/api/builds/image/${tokenId}`
+      const imageRes = await fetch(imageEndpoint, { redirect: "follow" })
+      if (imageRes.ok) {
+        const bytes = await imageRes.arrayBuffer()
+        if (bytes.byteLength > 0) {
+          const contentType = (imageRes.headers.get("content-type") || "").toLowerCase()
+          const ext = contentType.includes("png")
+            ? "png"
+            : contentType.includes("jpeg") || contentType.includes("jpg")
+              ? "jpg"
+              : contentType.includes("webp")
+                ? "webp"
+                : "png"
+          const imageUploadRes = await uploadWithRetry(() => {
+            const formData = new FormData()
+            formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+            const blob = new Blob([bytes], { type: contentType || "image/png" })
+            imagePath = `${tokenId}.${ext}`
+            formData.append("file", blob, imagePath)
+            return formData
+          })
+          const imageUploadData = await imageUploadRes.json()
+          imageCid = imageUploadData.IpfsHash || imageUploadData.Hash || ""
+        }
+      }
+    } catch {
+      // Fallback path below.
+    }
+
+    if (!imageCid) {
+      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://baseblox-app.vercel.app").replace(/\/+$/, "")
+      const fallbackPng = `${appBaseUrl}/baseblox-pass.png`
+      const fallbackRes = await fetch(fallbackPng, { redirect: "follow" })
+      if (!fallbackRes.ok) {
+        return NextResponse.json({ error: "Fallback PNG fetch failed" }, { status: 502 })
+      }
+      const bytes = await fallbackRes.arrayBuffer()
+      if (bytes.byteLength === 0) {
+        return NextResponse.json({ error: "Fallback PNG is empty" }, { status: 502 })
+      }
+      const imageName = `${tokenId}.png`
+      const imageUploadRes = await uploadWithRetry(() => {
+        const formData = new FormData()
+        formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+        const blob = new Blob([bytes], { type: "image/png" })
+        formData.append("file", blob, imageName)
+        return formData
+      })
+      const imageUploadData = await imageUploadRes.json()
+      imageCid = imageUploadData.IpfsHash || imageUploadData.Hash || ""
+      imagePath = imageName
+    }
+
+    if (!imageCid) {
+      return NextResponse.json(
+        { error: "IPFS image upload response missing CID" },
+        { status: 502 }
+      )
+    }
+    metadata.image = `ipfs://${imageCid}/${imagePath}`
+
     // Upload metadata JSON via Pinata (or fallback-compatible endpoint)
     const metadataJson = JSON.stringify(metadata)
     const fileName = `${tokenId}.json`
 
     const uploadRes = await uploadWithRetry(() => {
       const formData = new FormData()
+      // Keep URI shape stable as ipfs://<cid>/<tokenId>.json
+      formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
       const blob = new Blob([metadataJson], { type: "application/json" })
       formData.append("file", blob, fileName)
       return formData
@@ -145,22 +217,24 @@ export async function POST(
       )
     }
 
-    const buildId = await redis.get<string>(rk(`token:${tokenId}`))
-    if (buildId) {
-      const build = await redis.get<Build>(rk(`build:${buildId}`))
+    const buildIdAfter = await redis.get<string>(rk(`token:${tokenId}`))
+    if (buildIdAfter) {
+      const build = await redis.get<Build>(rk(`build:${buildIdAfter}`))
       if (build) {
         const now = new Date().toISOString()
         const updatedBuild: Build = {
           ...build,
           ipfsPending: false,
           ipfsCid: String(cid),
-          ipfsUri: `ipfs://${cid}`,
-          ipfsGatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}`,
+          ipfsUri: `ipfs://${cid}/${fileName}`,
+          ipfsGatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}/${fileName}`,
+          ipfsImageUri: `ipfs://${imageCid}/${imagePath}`,
+          ipfsImageGatewayUrl: `${IPFS_GATEWAY_BASE}/${imageCid}/${imagePath}`,
           ipfsSyncedAt: now,
           ipfsLastAttemptAt: now,
           ipfsLastError: undefined,
         }
-        await redis.set(rk(`build:${buildId}`), updatedBuild)
+        await redis.set(rk(`build:${buildIdAfter}`), updatedBuild)
       }
     }
 
@@ -168,7 +242,7 @@ export async function POST(
       success: true,
       tokenId,
       cid,
-      gatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}`,
+      gatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}/${fileName}`,
       metadata,
     })
   } catch (err: any) {
@@ -196,7 +270,7 @@ export async function POST(
 }
 
 // Build ERC-721 compliant metadata from Redis app data
-async function buildMetadataForToken(tokenId: string) {
+async function buildMetadataForToken(tokenId: string, request?: NextRequest) {
   // Fetch build data from Redis
   const buildId = await redis.get<string>(rk(`token:${tokenId}`))
   if (!buildId) return null
@@ -210,7 +284,23 @@ async function buildMetadataForToken(tokenId: string) {
   const d = build.brickDepth ?? build.baseDepth ?? 1
   const density = build.density ?? 1
   const mass = build.mass ?? (w * d * density)
-  const appBaseUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_APP_ORIGIN || "https://ethblox.art").replace(/\/+$/, "")
+  const requestOrigin = (() => {
+    try {
+      return request ? new URL(request.url).origin : ""
+    } catch {
+      return ""
+    }
+  })()
+  const appBaseUrl = (
+    env("NEXT_PUBLIC_APP_URL") ||
+    env("NEXT_PUBLIC_APP_ORIGIN") ||
+    requestOrigin ||
+    "https://baseblox-app.vercel.app"
+  )
+    .replace(/\s+/g, "")
+    .replace(/\/+$/, "")
+  const imageFromBuild = String((build as any).ipfsImageUri || "").trim()
+  const imagesCid = env("NEXT_PUBLIC_IMAGES_CID") || env("IMAGES_CID")
   const normalizedName =
     build.name && String(build.name).trim().length > 0
       ? String(build.name).trim()
@@ -257,8 +347,8 @@ async function buildMetadataForToken(tokenId: string) {
   return {
     name: normalizedName,
     description: `BASEBLOX ${kindLabel} - ${w}x${d} density ${density}`,
-    image: `${appBaseUrl}/api/builds/image/${tokenId}`,
-    animation_url: `${appBaseUrl}/viewer/${tokenId}`,
+    image: imageFromBuild || (imagesCid ? `ipfs://${imagesCid}/${tokenId}.png` : `${appBaseUrl}/api/builds/image/${tokenId}`),
+    ...(ENABLE_ANIMATION_URL ? { animation_url: buildAnimationUrl(tokenId, appBaseUrl) } : {}),
     external_url: `${appBaseUrl}/explore/${tokenId}`,
     attributes,
   }
