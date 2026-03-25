@@ -20,6 +20,16 @@ const ADMIN_TOKEN = env("ADMIN_RESET_TOKEN")
 const OWNER_AUTH_PREFIX = "BASEBLOX_IPFS_PUSH"
 const ENABLE_ANIMATION_URL = env("ENABLE_ANIMATION_URL") === "1"
 
+function isLikelyIpfsCid(v: string) {
+  const s = String(v || "").trim()
+  return /^(bafy[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})$/.test(s)
+}
+
+function readImagesCid() {
+  const raw = env("NEXT_PUBLIC_IMAGES_CID") || env("IMAGES_CID")
+  return isLikelyIpfsCid(raw) ? raw : ""
+}
+
 async function authorize(request: NextRequest, tokenId: string): Promise<string | null> {
   // Admin override
   if (ADMIN_TOKEN) {
@@ -300,7 +310,7 @@ async function buildMetadataForToken(tokenId: string, request?: NextRequest) {
     .replace(/\s+/g, "")
     .replace(/\/+$/, "")
   const imageFromBuild = String((build as any).ipfsImageUri || "").trim()
-  const imagesCid = env("NEXT_PUBLIC_IMAGES_CID") || env("IMAGES_CID")
+  const imagesCid = readImagesCid()
   const normalizedName =
     build.name && String(build.name).trim().length > 0
       ? String(build.name).trim()

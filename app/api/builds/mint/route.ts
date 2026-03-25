@@ -31,6 +31,16 @@ const ENABLE_ANIMATION_URL = env("ENABLE_ANIMATION_URL") === "1"
 const REQUIRE_CAPTURE_IMAGE_ON_MINT = (env("REQUIRE_CAPTURE_IMAGE_ON_MINT") || "1") === "1"
 const AUTO_MARKETPLACE_PUBLISH_ON_MINT = (env("AUTO_MARKETPLACE_PUBLISH_ON_MINT") || "1") === "1"
 
+function isLikelyIpfsCid(v: string) {
+  const s = String(v || "").trim()
+  return /^(bafy[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})$/.test(s)
+}
+
+function readImagesCid() {
+  const raw = env("NEXT_PUBLIC_IMAGES_CID") || env("IMAGES_CID")
+  return isLikelyIpfsCid(raw) ? raw : ""
+}
+
 const CHAIN_READ_ABI = [
   "function nextTokenId() view returns (uint256)",
   "function exists(uint256 tokenId) view returns (bool)",
@@ -714,7 +724,7 @@ function buildMetadataFromBuild(build: Build) {
   const mass = build.mass ?? (w * d * density)
   const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://baseblox-app.vercel.app").replace(/\/+$/, "")
   const imageFromBuild = String((build as any).ipfsImageUri || "").trim()
-  const imagesCid = env("NEXT_PUBLIC_IMAGES_CID") || env("IMAGES_CID")
+  const imagesCid = readImagesCid()
   const normalizedName =
     build.name && String(build.name).trim().length > 0
       ? String(build.name).trim()

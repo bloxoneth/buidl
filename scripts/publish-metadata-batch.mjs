@@ -102,6 +102,17 @@ function buildAnimationUrl(tokenId) {
   return `./${tokenId}.html`;
 }
 
+function isLikelyIpfsCid(v) {
+  const s = String(v || "").trim();
+  return /^(bafy[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})$/.test(s);
+}
+
+function isPlaceholderImageUri(v) {
+  const s = String(v || "").trim();
+  if (!s) return true;
+  return /^ipfs:\/\/cid\b/i.test(s) || /^ipfs:\/\/[^/]+\/images\//i.test(s);
+}
+
 function resolveAppBaseUrl() {
   const explicit =
     process.env.APP_URL ||
@@ -164,7 +175,9 @@ function buildMetadata(build, tokenId, appBaseUrl, imagesCid) {
 
   const imageFromBuild = String(build?.ipfsImageUri || "").trim();
   const usableBuildImage =
-    imageFromBuild && !/\.svg(\?.*)?$/i.test(imageFromBuild) ? imageFromBuild : "";
+    imageFromBuild && !/\.svg(\?.*)?$/i.test(imageFromBuild) && !isPlaceholderImageUri(imageFromBuild)
+      ? imageFromBuild
+      : "";
   const image = usableBuildImage
     ? usableBuildImage
     : appBaseUrl
@@ -420,7 +433,8 @@ async function main() {
   const chainId = String(process.env.NEXT_PUBLIC_CHAIN_ID || "84532");
   const redisPrefix = process.env.REDIS_KEY_PREFIX || "";
   const appBaseUrl = resolveAppBaseUrl();
-  const imagesCid = (process.env.NEXT_PUBLIC_IMAGES_CID || process.env.IMAGES_CID || "").trim();
+  const rawImagesCid = (process.env.NEXT_PUBLIC_IMAGES_CID || process.env.IMAGES_CID || "").trim();
+  const imagesCid = isLikelyIpfsCid(rawImagesCid) ? rawImagesCid : "";
 
   const buildNft = process.env.NEXT_PUBLIC_BUILDNFT_ADDRESS;
   const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || process.env.NEXT_PUBLIC_RPC_URL;

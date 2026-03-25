@@ -1,6 +1,9 @@
 import { ethers } from "ethers"
 import { computeSpecKey } from "../brickSpec"
 
+const env = (key: string) => (process.env[key] ?? "").trim()
+const isLikelyIpfsCid = (v: string) => /^(bafy[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})$/.test(String(v || "").trim())
+
 // Constants
 export const FEE_PER_MINT = ethers.parseEther("0.001") // 0.001 ETH mint fee (test)
 export const BURN_FEE = ethers.parseEther("0.005") // 0.005 ETH burn fee
@@ -11,9 +14,9 @@ export const MINT_GAS_LIMIT_FORCE = 800_000n // upper bound when force-sending
 // Metadata via IPFS - baseTokenURI is set on-chain, no per-token URIs needed
 export const BASE_METADATA_CID = "bafybeihf3bprrm6gr5prmzatwnjlnl3pmygw5xh44tvnwccejqo2yfoaii"
 export const BASE_METADATA_URI =
-  process.env.NEXT_PUBLIC_BASE_METADATA_URI ?? `ipfs://${BASE_METADATA_CID}`
+  env("NEXT_PUBLIC_BASE_METADATA_URI") || `ipfs://${BASE_METADATA_CID}`
 export const BASE_METADATA_GATEWAY =
-  process.env.NEXT_PUBLIC_BASE_METADATA_GATEWAY ??
+  env("NEXT_PUBLIC_BASE_METADATA_GATEWAY") ||
   `https://gateway.pinata.cloud/ipfs/${BASE_METADATA_CID}`
 export const tokenMetadataURI = (tokenId: string | number) =>
   `${BASE_METADATA_URI}/${tokenId}.json`
@@ -22,10 +25,10 @@ export const tokenMetadataGatewayURL = (tokenId: string | number) =>
 
 // Images via IPFS - stored at root of images CID (no /images/ folder)
 export const IMAGES_CID =
-  process.env.NEXT_PUBLIC_IMAGES_CID ??
+  (isLikelyIpfsCid(env("NEXT_PUBLIC_IMAGES_CID")) ? env("NEXT_PUBLIC_IMAGES_CID") : "") ||
   "bafybeibnk4kq7mesrs7wtwi2ypwlnxhazoqkwgoycol55n64tqseox2q2a"
 export const IMAGES_GATEWAY =
-  process.env.NEXT_PUBLIC_IMAGES_GATEWAY ??
+  env("NEXT_PUBLIC_IMAGES_GATEWAY") ||
   `https://gateway.pinata.cloud/ipfs/${IMAGES_CID}`
 export const tokenImageURI = (tokenId: string | number) =>
   `ipfs://${IMAGES_CID}/${tokenId}.png`
@@ -34,8 +37,7 @@ export const tokenImageGatewayURL = (tokenId: string | number) =>
 
 // Resolve any ipfs:// URI to a gateway URL
 export const resolveIPFS = (uri: string) => {
-  const gateway =
-    process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? "https://gateway.pinata.cloud/ipfs/"
+  const gateway = env("NEXT_PUBLIC_IPFS_GATEWAY") || "https://gateway.pinata.cloud/ipfs/"
   return uri.replace("ipfs://", gateway)
 }
 
@@ -48,25 +50,25 @@ export const BUILD_KIND = {
 // Network: configurable via env, defaults to Base Sepolia
 const DEFAULT_CHAIN_ID = 84532
 const DEFAULT_CHAIN_HEX = "0x14a34"
-export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? DEFAULT_CHAIN_ID)
+export const CHAIN_ID = Number(env("NEXT_PUBLIC_CHAIN_ID") || DEFAULT_CHAIN_ID)
 export const RPC_URL =
-  process.env.NEXT_PUBLIC_RPC_URL ||
-  process.env.BASE_SEPOLIA_RPC_URL ||
+  env("NEXT_PUBLIC_RPC_URL") ||
+  env("BASE_SEPOLIA_RPC_URL") ||
   "https://sepolia.base.org"
 
 // Contract addresses (env override with Base Sepolia fallback)
 export const CONTRACTS = {
   MOCK_BLOX:
-    process.env.NEXT_PUBLIC_BLOX_ADDRESS ?? "0x6578d53995FEB0e486135b893B8bC16AE1a5Ec52",
+    env("NEXT_PUBLIC_BLOX_ADDRESS") || "0x6578d53995FEB0e486135b893B8bC16AE1a5Ec52",
   BUILD_NFT:
-    process.env.NEXT_PUBLIC_BUILDNFT_ADDRESS ?? "0x6Da8ABFeCfd468E6CfCc551E014388f7B279f1A3",
+    env("NEXT_PUBLIC_BUILDNFT_ADDRESS") || "0x2e4ff64808927e1fe743145bc1244c7e2fa39c73",
   LICENSE_REGISTRY:
-    process.env.NEXT_PUBLIC_LICENSE_REGISTRY_ADDRESS ?? "0x6Fe315D0CA4EB570dC96d2b1C7E2a287d492Cc5A",
+    env("NEXT_PUBLIC_LICENSE_REGISTRY_ADDRESS") || "0x54ecFA6a349d45865EDeb7ED5Af5820418F56A12",
   LICENSE_NFT:
-    process.env.NEXT_PUBLIC_LICENSE_NFT_ADDRESS ?? "0xfEb8dCa56E849E91E7D3B4a2Ba2673Bb5FDf080E",
+    env("NEXT_PUBLIC_LICENSE_NFT_ADDRESS") || "0xCE9d8d013F9E800f2A75658Eaf77c5B1e3bA73b3",
   DISTRIBUTOR:
-    process.env.NEXT_PUBLIC_DISTRIBUTOR_ADDRESS ?? "0xf9b225DAbD233a28da36C3379197bD165759E865",
-  BASE_SEPOLIA_CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_HEX ?? DEFAULT_CHAIN_HEX,
+    env("NEXT_PUBLIC_DISTRIBUTOR_ADDRESS") || "0x9CB35FfedC553753CCDFED983F4ef8f3098A457A",
+  BASE_SEPOLIA_CHAIN_ID: env("NEXT_PUBLIC_CHAIN_HEX") || DEFAULT_CHAIN_HEX,
 }
 
 // Minimal ABIs
@@ -403,55 +405,19 @@ export async function mintBuildNFTWithParams(
   forceSend = false,
 ): Promise<ethers.ContractTransactionResponse> {
   const signer = await provider.getSigner()
-  
-  // JSON ABI matching on-chain contract (MethodID: 0x0923bb28)
-  // density is uint16 (NOT uint8) - confirmed from BaseScan tx 0x37c60c0d
-  const mintAbi = [{
-    type: "function",
-    name: "mint",
-    stateMutability: "payable",
-    inputs: [
-      { name: "geometryHash", type: "bytes32" },
-      { name: "mass", type: "uint256" },
-      { name: "uri", type: "string" },
-      { name: "componentBuildIds", type: "uint256[]" },
-      { name: "componentCounts", type: "uint256[]" },
-      { name: "kind", type: "uint8" },
-      { name: "width", type: "uint8" },
-      { name: "depth", type: "uint8" },
-      { name: "density", type: "uint16" },
-    ],
-    outputs: [],
-  }]
-  
-  const contract = new ethers.Contract(CONTRACTS.BUILD_NFT, mintAbi, signer)
-  
-  // Log the populated transaction to verify calldata before sending
-  const populated = await contract.mint.populateTransaction(
-    params.geometryHash,
-    BigInt(params.mass),
-    params.uri,
-    params.componentBuildIds,
-    params.componentCounts,
-    params.kind,
-    params.width,
-    params.depth,
-    params.density,
-    { value: FEE_PER_MINT, gasLimit: forceSend ? MINT_GAS_LIMIT_FORCE : MINT_GAS_LIMIT }
-  )
-  
-  if (!populated.data || populated.data.length < 10) {
-    throw new Error(`Calldata is empty or too short: "${populated.data}"`)
+
+  // Encode calldata explicitly and send a raw tx so data can never be omitted.
+  const data = encodeMintCalldata(params)
+  if (!data || data.length < 10 || data === "0x") {
+    throw new Error(`Calldata is empty or too short: "${data}"`)
   }
-  
-  const tx = await signer.sendTransaction({
-    to: populated.to,
-    data: populated.data,
+
+  return await signer.sendTransaction({
+    to: CONTRACTS.BUILD_NFT,
+    data,
     value: FEE_PER_MINT,
     gasLimit: forceSend ? MINT_GAS_LIMIT_FORCE : MINT_GAS_LIMIT,
   })
-  
-  return tx
 }
 
 // Encode calldata for mint - density is uint16
