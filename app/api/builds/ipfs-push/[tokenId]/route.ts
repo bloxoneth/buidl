@@ -6,13 +6,32 @@ import type { Build } from "@/lib/types"
 import { CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
 import { buildAnimationUrl } from "@/lib/animation-url"
 
-const env = (k: string) => (process.env[k] || "").trim()
+const envRaw = (k: string) => (process.env[k] || "").trim()
+const env = (k: string) => {
+  const v = envRaw(k)
+  // Allow "commenting out" secrets in .env via ##... without breaking provider selection.
+  if (v.startsWith("#")) return ""
+  return v
+}
 
-const IPFS_API_TOKEN = env("PINATA_JWT") || env("LIGHTHOUSE_API_KEY")
+const PINATA_JWT = env("PINATA_JWT")
+const LIGHTHOUSE_API_KEY = env("LIGHTHOUSE_API_KEY")
+const IPFS_PROVIDER = (env("IPFS_PROVIDER") || (LIGHTHOUSE_API_KEY ? "lighthouse" : PINATA_JWT ? "pinata" : "")).toLowerCase()
+const IPFS_API_TOKEN = env("IPFS_API_TOKEN") || (IPFS_PROVIDER === "pinata" ? PINATA_JWT : LIGHTHOUSE_API_KEY)
 const IPFS_UPLOAD_URL =
   env("IPFS_UPLOAD_URL") ||
   env("LIGHTHOUSE_UPLOAD_URL") ||
-  "https://api.pinata.cloud/pinning/pinFileToIPFS"
+  (IPFS_PROVIDER === "lighthouse"
+    ? "https://node.lighthouse.storage/api/v0/add"
+    : "https://api.pinata.cloud/pinning/pinFileToIPFS")
+const LIGHTHOUSE_UPLOAD_URL_FALLBACKS = [
+  "https://node.lighthouse.storage/api/v0/add",
+  "https://api.lighthouse.storage/api/v0/add",
+]
+const IPFS_UPLOAD_URLS =
+  IPFS_PROVIDER === "lighthouse"
+    ? Array.from(new Set([IPFS_UPLOAD_URL, ...LIGHTHOUSE_UPLOAD_URL_FALLBACKS]))
+    : [IPFS_UPLOAD_URL]
 const IPFS_GATEWAY_BASE = env("PINATA_GATEWAY_BASE") || "https://gateway.pinata.cloud/ipfs"
 const IPFS_UPLOAD_TIMEOUT_MS = Number(env("IPFS_UPLOAD_TIMEOUT_MS") || "25000")
 const IPFS_UPLOAD_RETRIES = Number(env("IPFS_UPLOAD_RETRIES") || "4")
@@ -28,6 +47,13 @@ function isLikelyIpfsCid(v: string) {
 function readImagesCid() {
   const raw = env("NEXT_PUBLIC_IMAGES_CID") || env("IMAGES_CID")
   return isLikelyIpfsCid(raw) ? raw : ""
+}
+
+function appendProviderUploadOptions(formData: FormData) {
+  // Pinata supports provider-specific pin options; Lighthouse ignores this field.
+  if (IPFS_PROVIDER === "pinata") {
+    formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+  }
 }
 
 async function authorize(request: NextRequest, tokenId: string): Promise<string | null> {
@@ -68,27 +94,29 @@ async function authorize(request: NextRequest, tokenId: string): Promise<string 
 async function uploadWithRetry(formDataFactory: () => FormData) {
   let lastError: Error | null = null
   for (let attempt = 1; attempt <= IPFS_UPLOAD_RETRIES; attempt++) {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), IPFS_UPLOAD_TIMEOUT_MS)
-    try {
-      const uploadRes = await fetch(IPFS_UPLOAD_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${IPFS_API_TOKEN}`,
-        },
-        body: formDataFactory(),
-        signal: controller.signal,
-      })
-      clearTimeout(timer)
-      if (!uploadRes.ok) {
-        const errText = await uploadRes.text()
-        lastError = new Error(`IPFS upload failed: ${uploadRes.status} ${errText}`)
-      } else {
-        return uploadRes
+    for (const uploadUrl of IPFS_UPLOAD_URLS) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), IPFS_UPLOAD_TIMEOUT_MS)
+      try {
+        const uploadRes = await fetch(uploadUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${IPFS_API_TOKEN}`,
+          },
+          body: formDataFactory(),
+          signal: controller.signal,
+        })
+        clearTimeout(timer)
+        if (!uploadRes.ok) {
+          const errText = await uploadRes.text()
+          lastError = new Error(`IPFS upload failed (${uploadUrl}): ${uploadRes.status} ${errText}`)
+        } else {
+          return uploadRes
+        }
+      } catch (err: any) {
+        clearTimeout(timer)
+        lastError = err instanceof Error ? err : new Error(String(err))
       }
-    } catch (err: any) {
-      clearTimeout(timer)
-      lastError = err instanceof Error ? err : new Error(String(err))
     }
     if (attempt < IPFS_UPLOAD_RETRIES) {
       await new Promise((r) => setTimeout(r, 700 * attempt))
@@ -128,7 +156,7 @@ export async function POST(
 
   if (!IPFS_API_TOKEN) {
     return NextResponse.json(
-      { error: "PINATA_JWT not configured (or LIGHTHOUSE_API_KEY fallback)." },
+      { error: "No IPFS API token configured (PINATA_JWT or LIGHTHOUSE_API_KEY)." },
       { status: 500 }
     )
   }
@@ -143,7 +171,7 @@ export async function POST(
     let imageCid = ""
     let imagePath = `${tokenId}.png`
     try {
-      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://baseblox-app.vercel.app").replace(/\/+$/, "")
+      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://ethblox-app-delta.vercel.app").replace(/\/+$/, "")
       const imageEndpoint = `${appBaseUrl}/api/builds/image/${tokenId}`
       const imageRes = await fetch(imageEndpoint, { redirect: "follow" })
       if (imageRes.ok) {
@@ -159,7 +187,7 @@ export async function POST(
                 : "png"
           const imageUploadRes = await uploadWithRetry(() => {
             const formData = new FormData()
-            formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+            appendProviderUploadOptions(formData)
             const blob = new Blob([bytes], { type: contentType || "image/png" })
             imagePath = `${tokenId}.${ext}`
             formData.append("file", blob, imagePath)
@@ -174,7 +202,7 @@ export async function POST(
     }
 
     if (!imageCid) {
-      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://baseblox-app.vercel.app").replace(/\/+$/, "")
+      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://ethblox-app-delta.vercel.app").replace(/\/+$/, "")
       const fallbackPng = `${appBaseUrl}/baseblox-pass.png`
       const fallbackRes = await fetch(fallbackPng, { redirect: "follow" })
       if (!fallbackRes.ok) {
@@ -187,7 +215,7 @@ export async function POST(
       const imageName = `${tokenId}.png`
       const imageUploadRes = await uploadWithRetry(() => {
         const formData = new FormData()
-        formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+        appendProviderUploadOptions(formData)
         const blob = new Blob([bytes], { type: "image/png" })
         formData.append("file", blob, imageName)
         return formData
@@ -211,8 +239,8 @@ export async function POST(
 
     const uploadRes = await uploadWithRetry(() => {
       const formData = new FormData()
-      // Keep URI shape stable as ipfs://<cid>/<tokenId>.json
-      formData.append("pinataOptions", JSON.stringify({ cidVersion: 1, wrapWithDirectory: true }))
+      // For Pinata keep URI shape stable as ipfs://<cid>/<tokenId>.json.
+      appendProviderUploadOptions(formData)
       const blob = new Blob([metadataJson], { type: "application/json" })
       formData.append("file", blob, fileName)
       return formData
@@ -305,7 +333,7 @@ async function buildMetadataForToken(tokenId: string, request?: NextRequest) {
     env("NEXT_PUBLIC_APP_URL") ||
     env("NEXT_PUBLIC_APP_ORIGIN") ||
     requestOrigin ||
-    "https://baseblox-app.vercel.app"
+    "https://ethblox-app-delta.vercel.app"
   )
     .replace(/\s+/g, "")
     .replace(/\/+$/, "")
