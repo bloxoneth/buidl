@@ -36,19 +36,22 @@ import {
   getLicenseBalances,
   getComponentLicenseStatus,
   isLicenseApproved,
+  approveLicenseNFT,
   approveBlox,
   buyMissingLicensesForComponents,
+  quoteLicenseForBuild,
   mintBuildNFTWithParams,
   addMintedHash,
   runMintDiagnostics,
   simulateMint,
   encodeMintCalldata,
   type MintParams,
-} from "@/lib/contracts/ethblox-contracts"
+} from "@/lib/contracts/buidl-contracts"
 import { generateBuildHash } from "@/lib/build-hash"
 import { normalizeBrickKey } from "@/data/bricks"
 import type { Brick } from "@/lib/types"
 import { StandardBuildCapture } from "./StandardBuildCapture"
+import { BuildVoxelPreview } from "@/components/preview/BuildVoxelPreview"
 
 interface MintDebugData {
   buildId: string
@@ -70,6 +73,7 @@ interface MintDebugData {
     nftsUsed: number
   }
   account?: string
+  density?: number
   timestamp: number
 }
 
@@ -85,6 +89,7 @@ interface ContractState {
   licenseIds: bigint[]
   licenseBalances: bigint[]
   licenseApproved: boolean
+  licenseFeeEstimate: bigint
 }
 
 interface ValidationResult {
@@ -93,26 +98,48 @@ interface ValidationResult {
   details?: string
 }
 
-function isLikelyBrickGeometry(debugData?: MintDebugData | null): boolean {
+function inferBrickFootprint(debugData?: MintDebugData | null): { width: number; depth: number } | null {
   if (!debugData || !Array.isArray(debugData.bricks) || debugData.bricks.length === 0) return false
 
   const layerY = debugData.bricks[0]?.position?.[1]
-  if (!Number.isFinite(layerY)) return false
+  if (!Number.isFinite(layerY)) return null
 
   // kind=0 brick must be single-layer and fill full rectangle footprint
   for (const b of debugData.bricks) {
-    if (!Array.isArray(b.position) || b.position.length !== 3) return false
-    if (Math.abs((b.position[1] ?? 0) - layerY) > 1e-6) return false
+    if (!Array.isArray(b.position) || b.position.length !== 3) return null
+    if (Math.abs((b.position[1] ?? 0) - layerY) > 1e-6) return null
   }
 
-  const rectArea = Number(debugData.baseWidth || 0) * Number(debugData.baseDepth || 0)
+  let minX = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let minZ = Number.POSITIVE_INFINITY
+  let maxZ = Number.NEGATIVE_INFINITY
+  for (const b of debugData.bricks) {
+    const cx = Number(b.position[0] ?? 0)
+    const cz = Number(b.position[2] ?? 0)
+    const w = Math.max(1, Number.isFinite(b.width) ? Number(b.width) : 1)
+    const d = Math.max(1, Number.isFinite(b.depth) ? Number(b.depth) : 1)
+    minX = Math.min(minX, cx - w / 2)
+    maxX = Math.max(maxX, cx + w / 2)
+    minZ = Math.min(minZ, cz - d / 2)
+    maxZ = Math.max(maxZ, cz + d / 2)
+  }
+
+  const width = Math.max(1, Math.round(maxX - minX))
+  const depth = Math.max(1, Math.round(maxZ - minZ))
+  const rectArea = width * depth
   const occupiedArea = debugData.bricks.reduce((sum, b) => {
     const w = Number.isFinite(b.width) ? b.width : 1
     const d = Number.isFinite(b.depth) ? b.depth : 1
     return sum + Math.max(1, w) * Math.max(1, d)
   }, 0)
 
-  return rectArea > 0 && occupiedArea === rectArea
+  if (!(rectArea > 0 && occupiedArea === rectArea)) return null
+  return { width, depth }
+}
+
+function isLikelyBrickGeometry(debugData?: MintDebugData | null): boolean {
+  return inferBrickFootprint(debugData) !== null
 }
 
 // Determine build kind: explicit URL wins, otherwise infer from geometry/composition
@@ -126,20 +153,34 @@ function detectKind(
   if (urlKind === "0") return BUILD_KIND.BRICK
   if (urlKind === "1") return BUILD_KIND.BUILD
 
+  const likelyBrick = isLikelyBrickGeometry(debugData)
+  const inferred = inferBrickFootprint(debugData)
+  const w = Number(inferred?.width || debugData?.baseWidth || 0)
+  const d = Number(inferred?.depth || debugData?.baseDepth || 0)
+  const withinBrickBounds = w >= 1 && d >= 1 && w <= 10 && d <= 10
+
   // Brick mint modal passes explicit dimensions for kind=0 flows.
   const urlWidth = Number(searchParams.get("width") || "")
   const urlDepth = Number(searchParams.get("depth") || "")
-  if (Number.isFinite(urlWidth) && Number.isFinite(urlDepth) && urlWidth > 0 && urlDepth > 0) {
+  if (
+    Number.isFinite(urlWidth) &&
+    Number.isFinite(urlDepth) &&
+    urlWidth > 0 &&
+    urlDepth > 0 &&
+    likelyBrick &&
+    withinBrickBounds
+  ) {
     return BUILD_KIND.BRICK
   }
 
-  if (brickCount <= 1) return BUILD_KIND.BRICK
+  // Single-layer rectangular footprints are kind=0 even if composed from multiple components.
+  if (likelyBrick && withinBrickBounds) return BUILD_KIND.BRICK
 
-  // Multiple bricks without explicit composition can still be a brick if they form one rectangle.
-  if (isLikelyBrickGeometry(debugData)) return BUILD_KIND.BRICK
-
-  // Has components and not a rectangular single-layer brick = build.
+  // Composition that is not a canonical brick footprint is kind=1.
   if (composition && Object.keys(composition).length > 0) return BUILD_KIND.BUILD
+
+  // Default fallback: treat non-rectangular/unbounded shapes as builds.
+  if (brickCount > 1) return BUILD_KIND.BUILD
 
   return BUILD_KIND.BUILD
 }
@@ -208,6 +249,24 @@ function normalizeCompositionMap(debugData: MintDebugData | null): CompositionMa
   return out
 }
 
+function resolveBaseTokenIdForDensity(
+  density: number,
+  baseBrickTokensByDensity: Record<string, string>,
+  brickSpecToTokenId: Record<string, string>,
+): string | null {
+  const d = String(density)
+  const byDensity = baseBrickTokensByDensity[d]
+  if (byDensity && /^\d+$/.test(String(byDensity))) return String(byDensity)
+
+  const baseSpec = normalizeBrickKey(1, 1, density)
+  const bySpec = brickSpecToTokenId[baseSpec]
+  if (bySpec && /^\d+$/.test(String(bySpec))) return String(bySpec)
+
+  // Sepolia test invariant: token #1 is the canonical 1x1-D1 primitive.
+  if (density === 1) return "1"
+  return null
+}
+
 export function MintDebugClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -226,12 +285,14 @@ export function MintDebugClient() {
     licenseIds: [],
     licenseBalances: [],
     licenseApproved: true,
+    licenseFeeEstimate: 0n,
   })
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [generatedHash, setGeneratedHash] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null)
+  const screenshotUrlRef = useRef<string | null>(null)
   const [skipChecks, setSkipChecks] = useState(false)
   const [minting, setMinting] = useState(false)
   const [buyingLicenses, setBuyingLicenses] = useState(false)
@@ -239,10 +300,68 @@ export function MintDebugClient() {
   const [approving, setApproving] = useState(false)
   const [mintTxHash, setMintTxHash] = useState<string | null>(null)
   const [mintError, setMintError] = useState<string | null>(null)
+  const [preflightRunning, setPreflightRunning] = useState(false)
+  const [preflightParamsOk, setPreflightParamsOk] = useState(false)
+  const [preflightCalldataOk, setPreflightCalldataOk] = useState(false)
+  const [preflightSimOk, setPreflightSimOk] = useState(false)
+  const [preflightError, setPreflightError] = useState<string | null>(null)
+  const [preflightHash, setPreflightHash] = useState<string | null>(null)
   const [diagnostics, setDiagnostics] = useState<Record<string, string> | null>(null)
   const [runningDiagnostics, setRunningDiagnostics] = useState(false)
   const [baseBrickTokensByDensity, setBaseBrickTokensByDensity] = useState<Record<string, string>>({})
   const [brickSpecToTokenId, setBrickSpecToTokenId] = useState<Record<string, string>>({})
+  const tokenIdToBrickArea = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const [spec, tokenId] of Object.entries(brickSpecToTokenId || {})) {
+      const m = spec.match(/^(\d+)x(\d+)-D(\d+)$/)
+      if (!m) continue
+      const w = Number(m[1])
+      const d = Number(m[2])
+      if (!Number.isFinite(w) || !Number.isFinite(d) || w <= 0 || d <= 0) continue
+      out[String(tokenId)] = w * d
+    }
+    return out
+  }, [brickSpecToTokenId])
+
+  const mapBuildToDebugData = (build: any): MintDebugData | null => {
+    if (!build || typeof build !== "object") return null
+    let bricks: Brick[] = []
+    if (Array.isArray(build.bricks)) {
+      bricks = build.bricks as Brick[]
+    } else if (typeof build.bricks === "string") {
+      try {
+        const parsed = JSON.parse(build.bricks)
+        if (Array.isArray(parsed)) bricks = parsed as Brick[]
+      } catch {
+        bricks = []
+      }
+    }
+    if (!Array.isArray(bricks) || bricks.length === 0) return null
+
+    const baseWidth = Number(build.baseWidth ?? build.brickWidth ?? 1)
+    const baseDepth = Number(build.baseDepth ?? build.brickDepth ?? 1)
+    const totalBloxMass = Number(build.mass ?? build.totalBloxMass ?? bricks.reduce((sum, b) => sum + (Number(b.width || 1) * Number(b.depth || 1)), 0))
+    const uniqueColors = Number(build.colors ?? build.uniqueColors ?? new Set(bricks.map((b) => b.color)).size)
+    const density = Number(build.density ?? 1)
+
+    return {
+      buildId: String(build.buildId ?? build.id ?? `loaded_${Date.now()}`),
+      buildName: String(build.name ?? build.buildName ?? `Build ${build.tokenId ?? ""}`).trim(),
+      buildHash: typeof build.buildHash === "string" ? build.buildHash : null,
+      bricks,
+      baseWidth,
+      baseDepth,
+      totalBloxMass,
+      uniqueColors,
+      composition: (build.composition && typeof build.composition === "object") ? build.composition : {},
+      componentBuildIds: Array.isArray(build.componentBuildIds) ? build.componentBuildIds : [],
+      componentCounts: Array.isArray(build.componentCounts) ? build.componentCounts : [],
+      metadata: (build.metadata && typeof build.metadata === "object") ? build.metadata : undefined,
+      account: typeof build.creator === "string" ? build.creator : undefined,
+      density,
+      timestamp: Number(build.timestamp ?? Date.now()),
+    }
+  }
   const explicitCompositionMap = useMemo(() => normalizeCompositionMap(debugData), [debugData])
   const compositionMap = useMemo(() => {
     if (!debugData) return {}
@@ -266,61 +385,158 @@ export function MintDebugClient() {
     return Object.keys(inferred).length > 0 ? inferred : explicitCompositionMap
   }, [debugData, explicitCompositionMap, searchParams, brickSpecToTokenId])
 
-  // Load debug data from sessionStorage or URL params (from BrickMintModal redirect)
-  // Runs once on mount only - searchParams are stable from useSearchParams()
-  const dataLoadedRef = useRef(false)
+  // Load debug data from URL params first, then API/session fallback.
   useEffect(() => {
-    if (dataLoadedRef.current) return
-    dataLoadedRef.current = true
+    let cancelled = false
 
-    // Check URL params first (from BrickMintModal redirect)
-    const kind = searchParams.get("kind")
-    const brickWidth = searchParams.get("width")
-    const brickDepth = searchParams.get("depth")
-    const brickDensity = searchParams.get("density")
-    const brickName = searchParams.get("name")
-    
-    if (kind === "0" && brickWidth && brickDepth) {
-      const w = parseInt(brickWidth)
-      const d = parseInt(brickDepth)
-      const dens = brickDensity ? parseInt(brickDensity) : 1
-      const name = brickName || `${w}x${d}-D${dens}`
-      
-      setDebugData({
-        buildId: `brick_${w}x${d}_d${dens}`,
-        buildName: name,
-        buildHash: null,
-        bricks: [{ id: "1", position: [0, 0.5, 0] as [number, number, number], color: "#e8d44d", width: w, depth: d }],
-        baseWidth: w,
-        baseDepth: d,
-        totalBloxMass: w * d * dens,
-        uniqueColors: 1,
-        timestamp: Date.now(),
-        metadata: {
-          buildWidth: w,
-          buildDepth: d,
-          totalBricks: 1,
-          totalInstances: 1,
-          nftsUsed: 0,
-        },
-      })
-      setLoading(false)
-      return
-    }
-    
-    // Fallback: load from sessionStorage
-    const stored = sessionStorage.getItem("ethblox_mint_debug")
-    if (stored) {
+    const loadDebugData = async () => {
+      // Check URL params first (from BrickMintModal redirect)
+      const kind = searchParams.get("kind")
+      const brickWidth = searchParams.get("width")
+      const brickDepth = searchParams.get("depth")
+      const brickDensity = searchParams.get("density")
+      const brickName = searchParams.get("name")
+
       try {
-        const data = JSON.parse(stored)
-        setDebugData(data)
+        if (kind === "0" && brickWidth && brickDepth) {
+          const w = parseInt(brickWidth)
+          const d = parseInt(brickDepth)
+          const dens = brickDensity ? parseInt(brickDensity) : 1
+          const name = brickName || `${w}x${d}-D${dens}`
+
+          if (!cancelled) {
+            setDebugData({
+              buildId: `brick_${w}x${d}_d${dens}`,
+              buildName: name,
+              buildHash: null,
+              bricks: [{ id: "1", position: [0, 0.5, 0] as [number, number, number], color: "#e8d44d", width: w, depth: d }],
+              baseWidth: w,
+              baseDepth: d,
+              totalBloxMass: w * d * dens,
+              uniqueColors: 1,
+              timestamp: Date.now(),
+              metadata: {
+                buildWidth: w,
+                buildDepth: d,
+                totalBricks: 1,
+                totalInstances: 1,
+                nftsUsed: 0,
+              },
+            })
+            setLoading(false)
+          }
+          return
+        }
+
+        const buildIdParam = searchParams.get("buildId")
+        if (buildIdParam) {
+          const res = await fetch(`/api/builds/${encodeURIComponent(buildIdParam)}`, { cache: "no-store" })
+          const json = await res.json().catch(() => null)
+          if (res.ok && json) {
+            const mapped = mapBuildToDebugData(json)
+            if (mapped && !cancelled) {
+              setDebugData(mapped)
+              setLoading(false)
+              return
+            }
+          }
+        }
+
+        const tokenIdParam = searchParams.get("tokenId")
+        if (tokenIdParam) {
+          const res = await fetch(`/api/builds/token/${encodeURIComponent(tokenIdParam)}`, { cache: "no-store" })
+          const json = await res.json().catch(() => null)
+          if (res.ok && json) {
+            const mapped = mapBuildToDebugData(json)
+            if (mapped && !cancelled) {
+              setDebugData(mapped)
+              setLoading(false)
+              return
+            }
+          }
+        }
+
+        // Fallback: load from sessionStorage
+        const stored = sessionStorage.getItem("buidl_mint_debug")
+        if (stored) {
+          const data = JSON.parse(stored)
+          if (!cancelled) setDebugData(data)
+        }
       } catch (e) {
-        console.error("Failed to parse mint debug data:", e)
+        console.error("Failed to load mint debug data:", e)
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     }
-    setLoading(false)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+
+    loadDebugData()
+
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams])
+
+  useEffect(() => {
+    setPreflightRunning(false)
+    setPreflightParamsOk(false)
+    setPreflightCalldataOk(false)
+    setPreflightSimOk(false)
+    setPreflightError(null)
+    setPreflightHash(null)
+  }, [debugData?.buildId, generatedHash])
+
+  const runPreflightValidation = async () => {
+    setPreflightRunning(true)
+    setPreflightParamsOk(false)
+    setPreflightCalldataOk(false)
+    setPreflightSimOk(false)
+    setPreflightError(null)
+    setPreflightHash(null)
+    try {
+      if (!generatedHash || !/^0x[0-9a-fA-F]{64}$/.test(generatedHash)) {
+        throw new Error("Geometry hash is not ready.")
+      }
+
+      // Step 1: Build and validate MintParams
+      const params = buildMintParams()
+      if (!params) {
+        throw new Error("Could not build mint params — check dimensions/components/density values.")
+      }
+      if (!params.geometryHash || !/^0x[0-9a-fA-F]{64}$/.test(params.geometryHash)) {
+        throw new Error(`Invalid geometryHash in params: ${params.geometryHash}`)
+      }
+      if (params.mass <= 0) {
+        throw new Error(`Mass must be > 0, got ${params.mass}`)
+      }
+      setPreflightParamsOk(true)
+
+      // Step 2: Encode calldata and verify it doesn't throw
+      try {
+        const calldata = encodeMintCalldata(params)
+        if (!calldata || calldata.length < 10) {
+          throw new Error("Calldata encoding returned empty result")
+        }
+      } catch (e: any) {
+        throw new Error(`Calldata encoding failed: ${e.message}`)
+      }
+      setPreflightCalldataOk(true)
+
+      // Step 3: Simulate the mint transaction
+      const ethereum = (window as any).ethereum
+      if (!ethereum) throw new Error("No wallet found — connect wallet to simulate.")
+      const provider = new ethers.BrowserProvider(ethereum)
+      const sim = await simulateMint(provider, params, account!)
+      if (!sim.success) {
+        throw new Error(`Simulation reverted: ${sim.decodedError || sim.result || "unknown reason"}`)
+      }
+      setPreflightSimOk(true)
+      setPreflightHash(generatedHash.toLowerCase())
+    } catch (err: any) {
+      setPreflightError(err?.message || "Preflight validation failed")
+    } finally {
+      setPreflightRunning(false)
+    }
+  }
 
   // Load canonical 1x1 base brick tokens by density (used for kind=0 component composition)
   useEffect(() => {
@@ -379,6 +595,7 @@ export function MintDebugClient() {
           licenseIds: [],
           licenseBalances: [],
           licenseApproved: true,
+          licenseFeeEstimate: 0n,
         })
         setRefreshing(false)
         return
@@ -398,6 +615,7 @@ export function MintDebugClient() {
       let licenseIds: bigint[] = []
       let licenseBalances: bigint[] = []
       let licenseApproved = true
+      let licenseFeeEstimate = 0n
 
       if (componentTokenIds.length > 0 && isCorrectChain) {
         try {
@@ -406,6 +624,16 @@ export function MintDebugClient() {
             licenseBalances = await getLicenseBalances(provider, account, licenseIds)
             licenseApproved = await isLicenseApproved(provider, account, CONTRACTS.BUILD_NFT)
           }
+          // Quote license fees for each component
+          const quotePromises = Object.entries(compositionMap).map(async ([buildId, comp]) => {
+            try {
+              return await quoteLicenseForBuild(provider, BigInt(buildId), BigInt(comp.count))
+            } catch {
+              return 0n
+            }
+          })
+          const quotes = await Promise.all(quotePromises)
+          licenseFeeEstimate = quotes.reduce((sum, q) => sum + q, 0n)
         } catch (e) {
           console.error("[v0] Failed to fetch license data:", e)
         }
@@ -421,6 +649,7 @@ export function MintDebugClient() {
         licenseIds,
         licenseBalances,
         licenseApproved,
+        licenseFeeEstimate,
       })
     } catch (error) {
       console.error("[v0] Failed to fetch contract state:", error)
@@ -491,7 +720,7 @@ export function MintDebugClient() {
       if (!ethereum) throw new Error("No wallet found")
       
       const provider = new ethers.BrowserProvider(ethereum)
-      const requiredBlox = BigInt(debugData.totalBloxMass) * 10n ** 18n
+      const requiredBlox = BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate
       // Approve a large amount to avoid repeated approvals
       const approvalAmount = requiredBlox * 100n
       
@@ -514,20 +743,39 @@ export function MintDebugClient() {
     const kind = detectKind(searchParams, debugData.bricks.length, compositionMap, debugData)
     const hasComponents = Object.keys(compositionMap).length > 0
 
-    // Read density from URL params or sessionStorage data
-    const urlDensity = searchParams.get("density")
-    let mintDensity = urlDensity ? parseInt(urlDensity) : 0
+    // Read density from URL first, then saved payload; fall back to 1.
+    const urlDensity = Number(searchParams.get("density") || "")
+    const payloadDensity = Number((debugData as any)?.density ?? 0)
+    let mintDensity = Number.isFinite(urlDensity) && urlDensity > 0 ? urlDensity : payloadDensity
     
     // For bricks, density is REQUIRED and must be valid
     const validDensities = [1, 8, 27, 64, 125]
     if (kind === BUILD_KIND.BRICK) {
-      if (!mintDensity || !validDensities.includes(mintDensity)) {
-        setMintError(`Density is required for brick mints. Got: ${mintDensity || "none"}. Valid values: ${validDensities.join(", ")}. Go back and select a density in the brick mint modal.`)
+      if (!mintDensity || !validDensities.includes(mintDensity)) mintDensity = 1
+      if (!validDensities.includes(mintDensity)) {
+        setMintError(`Density is required for brick mints. Got: ${mintDensity || "none"}. Valid values: ${validDensities.join(", ")}.`)
         return null
       }
-      if (debugData.baseWidth < 1 || debugData.baseDepth < 1 || debugData.baseWidth > 10 || debugData.baseDepth > 10) {
-        setMintError(`Brick dimensions must be within 1..10. Got ${debugData.baseWidth}x${debugData.baseDepth}.`)
+      const inferred = inferBrickFootprint(debugData)
+      const brickW = Number(inferred?.width || debugData.baseWidth || 0)
+      const brickD = Number(inferred?.depth || debugData.baseDepth || 0)
+      if (brickW < 1 || brickD < 1 || brickW > 10 || brickD > 10) {
+        setMintError(`Brick dimensions must be within 1..10. Got ${brickW}x${brickD}.`)
         return null
+      }
+      const urlW = Number(searchParams.get("width") || "")
+      const urlD = Number(searchParams.get("depth") || "")
+      if (Number.isFinite(urlW) && Number.isFinite(urlD) && urlW > 0 && urlD > 0) {
+        const expectedW = Math.min(urlW, urlD)
+        const expectedD = Math.max(urlW, urlD)
+        const actualW = Math.min(brickW, brickD)
+        const actualD = Math.max(brickW, brickD)
+        if (expectedW !== actualW || expectedD !== actualD) {
+          setMintError(
+            `Stale mint draft detected. URL requests ${expectedW}x${expectedD} but payload resolved ${actualW}x${actualD}. Reload mint-debug from the brick modal and try again.`,
+          )
+          return null
+        }
       }
     }
     
@@ -538,9 +786,12 @@ export function MintDebugClient() {
 
     let componentIds: bigint[] = []
     let componentCounts: bigint[] = []
+    const inferred = inferBrickFootprint(debugData)
+    const brickWidth = Number(inferred?.width || debugData.baseWidth || 1)
+    const brickDepth = Number(inferred?.depth || debugData.baseDepth || 1)
 
     if (kind === BUILD_KIND.BRICK) {
-      const area = debugData.baseWidth * debugData.baseDepth
+      const area = brickWidth * brickDepth
       const isPrimitive1x1 = area === 1
       if (!isPrimitive1x1) {
         const validComponents = Object.entries(compositionMap)
@@ -549,20 +800,81 @@ export function MintDebugClient() {
         if (validComponents.length > 0) {
           componentIds = validComponents.map(([id]) => BigInt(id))
           componentCounts = validComponents.map(([, data]) => BigInt(data.count))
+          // Pre-validate area strictly before building calldata.
+          const componentArea = validComponents.reduce((sum, [id, data]) => {
+            const resolved = tokenIdToBrickArea[id]
+            if (resolved && resolved > 0) return sum + resolved * Number(data.count)
+            const nameMatch = String(data.name || "").match(/^(\d+)x(\d+)-D(\d+)$/)
+            if (nameMatch) {
+              const w = Number(nameMatch[1])
+              const d = Number(nameMatch[2])
+              if (Number.isFinite(w) && Number.isFinite(d) && w > 0 && d > 0) {
+                return sum + (w * d) * Number(data.count)
+              }
+            }
+            return sum
+          }, 0)
+          if (componentArea !== area) {
+            // Auto-repair partial/stale component maps by falling back to canonical 1x1 composition.
+            const baseTokenId = resolveBaseTokenIdForDensity(
+              mintDensity,
+              baseBrickTokensByDensity,
+              brickSpecToTokenId,
+            )
+            if (!baseTokenId) {
+              setMintError(
+                `Invalid brick composition: component area ${componentArea} != target area ${area}. ` +
+                `Missing base component 1x1-D${mintDensity} for auto-repair.`,
+              )
+              return null
+            }
+            componentIds = [BigInt(baseTokenId)]
+            componentCounts = [BigInt(area)]
+            console.warn(
+              `[mint-debug] Auto-repaired brick component map (area ${componentArea} -> ${area}) using 1x1-D${mintDensity}.`,
+            )
+          }
         } else {
-          const isSingleBrickDraft = Array.isArray(debugData.bricks) && debugData.bricks.length <= 1
-          if (!isSingleBrickDraft) {
-            setMintError("Could not resolve placed brick components to token IDs yet. Wait a second and retry diagnostics/mint.")
-            return null
+          // Try deterministic inference from placed brick specs in the draft.
+          const inferred = new Map<string, number>()
+          let hasMissingSpecMapping = false
+          if (Array.isArray(debugData.bricks) && debugData.bricks.length > 0) {
+            for (const b of debugData.bricks) {
+              const spec = normalizeBrickKey(Number(b.width || 1), Number(b.depth || 1), mintDensity)
+              const tokenId = brickSpecToTokenId[spec]
+              if (!tokenId) {
+                hasMissingSpecMapping = true
+                continue
+              }
+              inferred.set(tokenId, (inferred.get(tokenId) || 0) + 1)
+            }
           }
-          // Fallback for pure brick-mint modal flow where no explicit component map is present.
-          const baseTokenId = baseBrickTokensByDensity[String(mintDensity)]
-          if (!baseTokenId) {
-            setMintError(`Missing base component 1x1-D${mintDensity}. Mint that primitive first, then mint ${debugData.baseWidth}x${debugData.baseDepth}-D${mintDensity}.`)
-            return null
+
+          if (inferred.size > 0 && !hasMissingSpecMapping) {
+            const rows = Array.from(inferred.entries()).sort((a, b) => Number(a[0]) - Number(b[0]))
+            componentIds = rows.map(([id]) => BigInt(id))
+            componentCounts = rows.map(([, cnt]) => BigInt(cnt))
+          } else {
+            // Fallback: compose from canonical 1x1 for this density.
+            // This avoids false negatives when minted index mapping is stale/not hydrated yet.
+            const baseTokenId = resolveBaseTokenIdForDensity(
+              mintDensity,
+              baseBrickTokensByDensity,
+              brickSpecToTokenId,
+            )
+            if (!baseTokenId) {
+              setMintError(`Missing base component 1x1-D${mintDensity}. Mint that primitive first, then mint ${brickWidth}x${brickDepth}-D${mintDensity}.`)
+              return null
+            }
+            componentIds = [BigInt(baseTokenId)]
+            componentCounts = [BigInt(area)]
+            if (hasMissingSpecMapping) {
+              // Non-blocking warning: fallback composition was used.
+              console.warn(
+                `[mint-debug] Missing brickSpecToTokenId mapping for one or more placed specs; falling back to 1x1-D${mintDensity} composition.`,
+              )
+            }
           }
-          componentIds = [BigInt(baseTokenId)]
-          componentCounts = [BigInt(area)]
         }
       }
     } else if (hasComponents) {
@@ -576,13 +888,36 @@ export function MintDebugClient() {
     return {
       geometryHash: generatedHash,
       mass: debugData.totalBloxMass,
-      uri: "",
+      geometryData: new Uint8Array(0),
       componentBuildIds: componentIds,
       componentCounts: componentCounts,
+      manifest: [],
       kind,
-      width: debugData.baseWidth,
-      depth: debugData.baseDepth,
+      width: kind === BUILD_KIND.BRICK ? brickWidth : debugData.baseWidth,
+      depth: kind === BUILD_KIND.BRICK ? brickDepth : debugData.baseDepth,
       density: mintDensity,
+    }
+  }
+
+  const deriveExpectedBrickFromUrl = async () => {
+    const urlKind = searchParams.get("kind")
+    const urlW = Number(searchParams.get("width") || "")
+    const urlD = Number(searchParams.get("depth") || "")
+    if (urlKind !== "0" || !Number.isFinite(urlW) || !Number.isFinite(urlD) || urlW <= 0 || urlD <= 0) {
+      return null
+    }
+    const width = Math.min(urlW, urlD)
+    const depth = Math.max(urlW, urlD)
+    const geometryHash = await generateBuildHash({
+      bricks: [{ id: "1", position: [0, 0.5, 0], color: "#e8d44d", width, depth }],
+      baseWidth: width,
+      baseDepth: depth,
+    })
+    return {
+      width,
+      depth,
+      mass: width * depth,
+      geometryHash,
     }
   }
 
@@ -609,9 +944,27 @@ export function MintDebugClient() {
       
       const params = buildMintParams()
       if (!params) {
-        setDiagnostics({ "ERROR": "Could not build mint params - check density is set in URL (?density=8)" })
+        setDiagnostics({ "ERROR": "Could not build mint params - check dimensions/components/density values" })
         setRunningDiagnostics(false)
         return
+      }
+      const expectedBrick = await deriveExpectedBrickFromUrl()
+      if (expectedBrick) {
+        const actualW = Math.min(Number(params.width), Number(params.depth))
+        const actualD = Math.max(Number(params.width), Number(params.depth))
+        const dimMismatch = actualW !== expectedBrick.width || actualD !== expectedBrick.depth
+        const hashMismatch = String(params.geometryHash).toLowerCase() !== String(expectedBrick.geometryHash).toLowerCase()
+        if (dimMismatch || hashMismatch) {
+          setDiagnostics({
+            ERROR:
+              `Stale payload detected. URL expects ${expectedBrick.width}x${expectedBrick.depth} ` +
+              `with hash ${expectedBrick.geometryHash}, but payload is ${actualW}x${actualD} ` +
+              `with hash ${params.geometryHash}.`,
+            Fix: "Clear sessionStorage key 'buidl_mint_debug', reload mint-debug from Brick modal, and retry.",
+          })
+          setRunningDiagnostics(false)
+          return
+        }
       }
       
       const results = await runMintDiagnostics(provider, params, account)
@@ -620,29 +973,23 @@ export function MintDebugClient() {
       results["--- PAYLOAD BEING SENT ---"] = ""
       results["[0] geometryHash (bytes32)"] = params.geometryHash
       results["[1] mass (uint256)"] = BigInt(params.mass).toString()
-      results["[2] uri (string)"] = params.uri === "" ? '""  (empty)' : params.uri
+      results["[2] geometryData (bytes)"] = `${params.geometryData.length} bytes`
       results["[3] componentBuildIds (uint256[])"] = JSON.stringify(params.componentBuildIds.map(String))
       results["[4] componentCounts (uint256[])"] = JSON.stringify(params.componentCounts.map(String))
-      results["[5] kind (uint8)"] = params.kind.toString()
-      results["[6] width (uint8)"] = params.width.toString()
-      results["[7] depth (uint8)"] = params.depth.toString()
-      results["[8] density (uint8)"] = params.density.toString()
+      results["[5] manifest (tuple[])"] = `${params.manifest.length} entries`
+      results["[6] kind (uint8)"] = params.kind.toString()
+      results["[7] width (uint8)"] = params.width.toString()
+      results["[8] depth (uint8)"] = params.depth.toString()
+      results["[9] density (uint16)"] = params.density.toString()
       results["msg.value (wei)"] = FEE_PER_MINT.toString() + " (" + ethers.formatEther(FEE_PER_MINT) + " ETH)"
       results["to"] = CONTRACTS.BUILD_NFT
       results["from"] = account
-
-      // Known-good reference payload for comparison
-      results["--- EXPECTED (from user spec) ---"] = ""
-      results["ref[0] geometryHash"] = "0xeb38ea055d70d348cf22350be92b9fd5bd2e313dc6f092d109a07a405aac1a35"
-      results["ref[1] mass"] = "1"
-      results["ref[2] uri"] = '""'
-      results["ref[3] componentBuildIds"] = "[]"
-      results["ref[4] componentCounts"] = "[]"
-      results["ref[5] kind"] = "0"
-      results["ref[6] width"] = "1"
-      results["ref[7] depth"] = "1"
-      results["ref[8] density"] = "1"
-      results["ref msg.value"] = `${FEE_PER_MINT.toString()} (${ethers.formatEther(FEE_PER_MINT)} ETH)`
+      if (expectedBrick) {
+        results["expected.width"] = String(expectedBrick.width)
+        results["expected.depth"] = String(expectedBrick.depth)
+        results["expected.mass"] = String(expectedBrick.mass)
+        results["expected.geometryHash"] = expectedBrick.geometryHash
+      }
       
       // Add raw calldata
       try {
@@ -679,6 +1026,16 @@ export function MintDebugClient() {
   // forceSend uses higher configured gas limit
   const handleMint = async (forceSend = false) => {
     if (!isConnected || !account || !debugData || !generatedHash) return
+    const preflightPass =
+      preflightParamsOk &&
+      preflightCalldataOk &&
+      preflightSimOk &&
+      !!preflightHash &&
+      preflightHash === generatedHash.toLowerCase()
+    if (!preflightPass) {
+      setMintError("Run preflight validation first and wait for all checks to pass.")
+      return
+    }
     setMinting(true)
     setMintError(null)
     setMintTxHash(null)
@@ -703,25 +1060,28 @@ export function MintDebugClient() {
         setMinting(false)
         return
       }
-
-      if (params.componentBuildIds.length > 0) {
-        const status = await getComponentLicenseStatus(provider, account, params.componentBuildIds)
-        if (status.missingComponentBuildIds.length > 0) {
-          if (!autoBuyMissingLicenses) {
-            throw new Error(
-              `Missing licenses for component builds: ${status.missingComponentBuildIds.map((id) => id.toString()).join(", ")}. Buy licenses first or enable auto-buy.`,
-            )
-          }
-          const purchaseResult = await buyMissingLicensesForComponents(
-            provider,
-            account,
-            params.componentBuildIds,
+      const expectedBrick = await deriveExpectedBrickFromUrl()
+      if (expectedBrick) {
+        const actualW = Math.min(Number(params.width), Number(params.depth))
+        const actualD = Math.max(Number(params.width), Number(params.depth))
+        if (
+          actualW !== expectedBrick.width ||
+          actualD !== expectedBrick.depth ||
+          String(params.geometryHash).toLowerCase() !== String(expectedBrick.geometryHash).toLowerCase()
+        ) {
+          setMintError(
+            `Refusing stale mint payload. URL expects ${expectedBrick.width}x${expectedBrick.depth}, ` +
+            `payload resolved ${actualW}x${actualD}. Reload mint-debug from Brick modal.`,
           )
-          if (purchaseResult.txHashes.length > 0 || purchaseResult.registeredBuilds.length > 0) {
-            await fetchContractState()
-          }
+          setMinting(false)
+          return
         }
       }
+
+      // License registration, purchase, and escrow are handled atomically
+      // by the BuildNFT contract during mint — no separate steps needed.
+      // The user just needs enough BLOX approved to BuildNFT to cover
+      // both mass collateral and any license fees.
 
       // Send tx directly with gasLimit - no staticCall pre-check
       const tx = await mintBuildNFTWithParams(provider, params, forceSend)
@@ -808,12 +1168,37 @@ export function MintDebugClient() {
               
               // Build metadata
               metadata: debugData.metadata,
+              // Captured preview image (used by /api/builds/mint for IPFS image upload)
+              screenshotDataUrl: screenshotUrl || screenshotUrlRef.current,
             }),
           })
-          if (!saveRes.ok) {
-            const errJson = await saveRes.json().catch(() => null)
-            const errMsg = errJson?.error || `HTTP ${saveRes.status}`
-            setMintError(`Mint succeeded, but saving app data failed: ${errMsg}`)
+          const saveJson = await saveRes.json().catch(() => null)
+          if (!saveRes.ok || saveJson?.success === false) {
+            const needsIpfsRetry = Boolean(saveJson?.requiresIpfsSync)
+            if (needsIpfsRetry && mintedTokenId) {
+              try {
+                const signer = await provider.getSigner()
+                const ownerSig = await signer.signMessage(`BUIDL_IPFS_PUSH:${mintedTokenId}`)
+                const retryRes = await fetch(`/api/builds/ipfs-push/${mintedTokenId}`, {
+                  method: "POST",
+                  headers: {
+                    "x-owner-address": account,
+                    "x-owner-signature": ownerSig,
+                  },
+                })
+                const retryJson = await retryRes.json().catch(() => null)
+                if (!retryRes.ok || !retryJson?.success) {
+                  const errMsg = retryJson?.error || saveJson?.error || `HTTP ${retryRes.status}`
+                  setMintError(`Mint succeeded, but IPFS retry failed: ${errMsg}`)
+                }
+              } catch (retryErr: any) {
+                const errMsg = retryErr?.message || saveJson?.error || `HTTP ${saveRes.status}`
+                setMintError(`Mint succeeded, but IPFS retry failed: ${errMsg}`)
+              }
+            } else {
+              const errMsg = saveJson?.error || `HTTP ${saveRes.status}`
+              setMintError(`Mint succeeded, but saving app data failed: ${errMsg}`)
+            }
           }
         } catch (saveErr) {
           console.error("Failed to save mint to Redis:", saveErr)
@@ -905,7 +1290,7 @@ export function MintDebugClient() {
     if (!debugData) return []
 
     const validations: ValidationResult[] = []
-    const requiredBlox = BigInt(debugData.totalBloxMass) * 10n ** 18n
+    const requiredBlox = BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate
 
     // Wallet connection
     validations.push({
@@ -962,12 +1347,15 @@ export function MintDebugClient() {
       })
     }
 
-    // BLOX balance sufficient
+    // BLOX balance sufficient (mass collateral + license fees)
     if (contractState.bloxBalance !== null) {
+      const needDetail = contractState.licenseFeeEstimate > 0n
+        ? `Need: ${ethers.formatEther(requiredBlox)} BLOX (${debugData.totalBloxMass} collateral + ${ethers.formatEther(contractState.licenseFeeEstimate)} license fees)`
+        : `Need: ${ethers.formatEther(requiredBlox)} BLOX`
       validations.push({
         passed: contractState.bloxBalance >= requiredBlox,
         message: "Sufficient BLOX Balance",
-        details: `Have: ${ethers.formatEther(contractState.bloxBalance)} BLOX, Need: ${ethers.formatEther(requiredBlox)} BLOX`,
+        details: `Have: ${ethers.formatEther(contractState.bloxBalance)} BLOX, ${needDetail}`,
       })
     }
 
@@ -976,29 +1364,19 @@ export function MintDebugClient() {
       validations.push({
         passed: contractState.bloxAllowance >= requiredBlox,
         message: "BLOX Approval",
-        details: contractState.bloxAllowance >= requiredBlox 
+        details: contractState.bloxAllowance >= requiredBlox
           ? `Approved: ${ethers.formatEther(contractState.bloxAllowance)} BLOX`
-          : `Need to approve ${ethers.formatEther(requiredBlox)} BLOX`,
+          : `Need to approve ${ethers.formatEther(requiredBlox)} BLOX (incl. license fees)`,
       })
     }
 
-    // Component licenses (if any)
+    // Component licenses — handled atomically by BuildNFT during mint
+    // (auto-registers, auto-purchases, auto-escrows — no pre-approval needed)
     if (Object.keys(compositionMap).length > 0) {
-      const hasAllLicenses = contractState.licenseBalances.every(b => b > 0n)
       validations.push({
-        passed: hasAllLicenses || autoBuyMissingLicenses,
-        message: "Component Licenses Owned",
-        details: hasAllLicenses
-          ? `${contractState.licenseBalances.filter(b => b > 0n).length}/${contractState.licenseIds.length} licenses`
-          : autoBuyMissingLicenses
-            ? `Missing licenses will be purchased before mint (${contractState.licenseBalances.filter(b => b > 0n).length}/${contractState.licenseIds.length} owned)`
-            : `${contractState.licenseBalances.filter(b => b > 0n).length}/${contractState.licenseIds.length} licenses`,
-      })
-
-      validations.push({
-        passed: contractState.licenseApproved,
-        message: "License NFT Approval",
-        details: contractState.licenseApproved ? "Approved for BuildNFT" : "Need to approve",
+        passed: true,
+        message: "Component Licenses",
+        details: `${Object.keys(compositionMap).length} component type(s) — licenses handled at mint time`,
       })
     }
 
@@ -1008,6 +1386,14 @@ export function MintDebugClient() {
   const validations = getValidations()
   const allPassed = validations.length > 0 && validations.every(v => v.passed)
   const canMint = skipChecks || allPassed
+  const preflightPass =
+    preflightParamsOk &&
+    preflightCalldataOk &&
+    preflightSimOk &&
+    !!preflightHash &&
+    !!generatedHash &&
+    preflightHash === generatedHash.toLowerCase()
+  const canMintNow = canMint && preflightPass
   const componentTokenIds = Object.keys(compositionMap).map((id) => BigInt(id))
   const missingLicenseBuildIds = componentTokenIds.filter((_, i) => {
     const id = contractState.licenseIds[i] ?? 0n
@@ -1039,7 +1425,7 @@ export function MintDebugClient() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-[hsl(var(--ethblox-text-tertiary))]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[hsl(var(--buidl-text-tertiary))]" />
       </div>
     )
   }
@@ -1048,11 +1434,11 @@ export function MintDebugClient() {
     return (
       <div className="container mx-auto px-6 py-12 max-w-4xl">
         <div className="text-center">
-          <AlertCircle className="h-16 w-16 mx-auto mb-4 text-[hsl(var(--ethblox-text-tertiary))]" />
-          <h1 className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))] mb-2">
+          <AlertCircle className="h-16 w-16 mx-auto mb-4 text-[hsl(var(--buidl-text-tertiary))]" />
+          <h1 className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))] mb-2">
             No Mint Data Found
           </h1>
-          <p className="text-[hsl(var(--ethblox-text-secondary))] mb-6">
+          <p className="text-[hsl(var(--buidl-text-secondary))] mb-6">
             Please go to the builder and click "Mint in Dev Mode" from the mint dialog.
           </p>
           <Button onClick={() => router.push("/buildv2")}>
@@ -1071,16 +1457,16 @@ export function MintDebugClient() {
           variant="ghost" 
           size="sm" 
           onClick={() => router.back()}
-          className="text-[hsl(var(--ethblox-text-secondary))]"
+          className="text-[hsl(var(--buidl-text-secondary))]"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back
         </Button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))]">
+          <h1 className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))]">
             Mint Debug Mode
           </h1>
-          <p className="text-sm text-[hsl(var(--ethblox-text-secondary))]">
+          <p className="text-sm text-[hsl(var(--buidl-text-secondary))]">
             Review all mint parameters before submitting transaction
           </p>
         </div>
@@ -1089,7 +1475,7 @@ export function MintDebugClient() {
           size="sm" 
           onClick={fetchContractState}
           disabled={refreshing}
-          className="border-[hsl(var(--ethblox-border))] bg-transparent"
+          className="border-[hsl(var(--buidl-border))] bg-transparent"
         >
           <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
           Refresh
@@ -1105,7 +1491,7 @@ export function MintDebugClient() {
               <p className="text-sm font-medium text-orange-400">
                 Build Not Saved
               </p>
-              <p className="text-xs text-[hsl(var(--ethblox-text-secondary))] mt-1">
+              <p className="text-xs text-[hsl(var(--buidl-text-secondary))] mt-1">
                 Please go back to the builder and save your build with a name before minting.
               </p>
             </div>
@@ -1117,40 +1503,40 @@ export function MintDebugClient() {
         {/* Left Column - Build Data */}
         <div className="space-y-6">
           {/* Build Info */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+              <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                 Build Information
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-[hsl(var(--ethblox-text-secondary))]">Name</span>
-                <span className="text-[hsl(var(--ethblox-text-primary))] font-medium">
+                <span className="text-[hsl(var(--buidl-text-secondary))]">Name</span>
+                <span className="text-[hsl(var(--buidl-text-primary))] font-medium">
                   {debugData.buildName || "Untitled"}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[hsl(var(--ethblox-text-secondary))]">Build ID</span>
-                <span className="text-[hsl(var(--ethblox-text-primary))] font-mono text-sm">
+                <span className="text-[hsl(var(--buidl-text-secondary))]">Build ID</span>
+                <span className="text-[hsl(var(--buidl-text-primary))] font-mono text-sm">
                   {debugData.buildId}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[hsl(var(--ethblox-text-secondary))]">Total Bricks</span>
-                <span className="text-[hsl(var(--ethblox-text-primary))]">
+                <span className="text-[hsl(var(--buidl-text-secondary))]">Total Bricks</span>
+                <span className="text-[hsl(var(--buidl-text-primary))]">
                   {debugData.bricks.length}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[hsl(var(--ethblox-text-secondary))]">Unique Colors</span>
-                <span className="text-[hsl(var(--ethblox-text-primary))]">
+                <span className="text-[hsl(var(--buidl-text-secondary))]">Unique Colors</span>
+                <span className="text-[hsl(var(--buidl-text-primary))]">
                   {debugData.uniqueColors}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[hsl(var(--ethblox-text-secondary))]">Dimensions</span>
-                <span className="text-[hsl(var(--ethblox-text-primary))]">
+                <span className="text-[hsl(var(--buidl-text-secondary))]">Dimensions</span>
+                <span className="text-[hsl(var(--buidl-text-primary))]">
                   {debugData.baseWidth} x {debugData.baseDepth}
                 </span>
               </div>
@@ -1158,10 +1544,10 @@ export function MintDebugClient() {
           </Card>
 
           {/* On-Chain Mint Parameters - JSON Format */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+                <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                   On-Chain Mint Parameters
                 </CardTitle>
                 <Button 
@@ -1193,7 +1579,7 @@ export function MintDebugClient() {
               </div>
             </CardHeader>
             <CardContent>
-              <pre className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg text-xs font-mono text-[hsl(var(--ethblox-green))] overflow-auto max-h-80">
+              <pre className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg text-xs font-mono text-[hsl(var(--buidl-green))] overflow-auto max-h-80">
 {(() => {
   const kind = detectKind(searchParams, debugData.bricks.length, compositionMap, debugData)
   const componentPayload = getDisplayComponentPayload()
@@ -1217,10 +1603,10 @@ export function MintDebugClient() {
           </Card>
 
           {/* IPFS Metadata */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+                <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                   IPFS Metadata
                 </CardTitle>
                 <Button 
@@ -1233,10 +1619,10 @@ export function MintDebugClient() {
                     const specKey = generateSpecKey(debugData.baseWidth, debugData.baseDepth, mintDensity)
                     const componentsHash = generateComponentsHash(componentPayload.ids)
                     const metadata = {
-                      name: debugData.buildName || `BASEBLOX #${contractState.nextTokenId?.toString() || "?"}`,
-                      description: "BASEBLOX build/brick",
+                      name: debugData.buildName || `BUIDL #${contractState.nextTokenId?.toString() || "?"}`,
+                      description: "BUIDL build/brick",
                       image: tokenImageURI(contractState.nextTokenId?.toString() || "?"),
-                      external_url: "https://ethblox.art",
+                      external_url: "https://buidl.art",
                       attributes: [
                         { trait_type: "kind", value: kind },
                         { trait_type: "mass", value: debugData.totalBloxMass },
@@ -1256,7 +1642,7 @@ export function MintDebugClient() {
               </div>
             </CardHeader>
             <CardContent>
-              <pre className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg text-xs font-mono text-[hsl(var(--ethblox-accent-cyan))] overflow-auto max-h-96">
+              <pre className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg text-xs font-mono text-[hsl(var(--buidl-accent-cyan))] overflow-auto max-h-96">
 {(() => {
   const kind = detectKind(searchParams, debugData.bricks.length, compositionMap, debugData)
   const componentPayload = getDisplayComponentPayload()
@@ -1264,10 +1650,10 @@ export function MintDebugClient() {
   const specKey = generateSpecKey(debugData.baseWidth, debugData.baseDepth, mintDensity)
   const componentsHash = generateComponentsHash(componentPayload.ids)
   return JSON.stringify({
-    name: debugData.buildName || `BASEBLOX #${contractState.nextTokenId?.toString() || "?"}`,
-    description: "BASEBLOX build/brick",
+    name: debugData.buildName || `BUIDL #${contractState.nextTokenId?.toString() || "?"}`,
+    description: "BUIDL build/brick",
     image: tokenImageURI(contractState.nextTokenId?.toString() || "?"),
-    external_url: "https://ethblox.art",
+    external_url: "https://buidl.art",
     attributes: [
       { trait_type: "kind", value: kind },
       { trait_type: "mass", value: debugData.totalBloxMass },
@@ -1279,7 +1665,7 @@ export function MintDebugClient() {
   }, null, 2)
 })()}
               </pre>
-              <div className="mt-3 p-2 bg-[hsl(var(--ethblox-bg))] rounded text-xs text-[hsl(var(--ethblox-text-tertiary))]">
+              <div className="mt-3 p-2 bg-[hsl(var(--buidl-bg))] rounded text-xs text-[hsl(var(--buidl-text-tertiary))]">
                 <p><strong>Token URI:</strong> {"${baseUri}/${tokenId}.json"}</p>
                 <p><strong>Base URI:</strong> {BASE_METADATA_URI}</p>
               </div>
@@ -1287,25 +1673,25 @@ export function MintDebugClient() {
           </Card>
 
           {/* Contract Addresses */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+              <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                 Contract Addresses
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {Object.entries(CONTRACTS).filter(([key]) => key !== 'BASE_SEPOLIA_CHAIN_ID').map(([name, address]) => (
                 <div key={name} className="flex items-center justify-between">
-                  <span className="text-sm text-[hsl(var(--ethblox-text-secondary))]">{name}</span>
+                  <span className="text-sm text-[hsl(var(--buidl-text-secondary))]">{name}</span>
                   <div className="flex items-center gap-2">
-                    <code className="text-xs font-mono text-[hsl(var(--ethblox-text-tertiary))]">
+                    <code className="text-xs font-mono text-[hsl(var(--buidl-text-tertiary))]">
                       {address.slice(0, 6)}...{address.slice(-4)}
                     </code>
                     <a 
                       href={`${explorerBase}/address/${address}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-[hsl(var(--ethblox-accent-cyan))]"
+                      className="text-[hsl(var(--buidl-accent-cyan))]"
                     >
                       <ExternalLink className="h-3 w-3" />
                     </a>
@@ -1319,16 +1705,16 @@ export function MintDebugClient() {
         {/* Right Column - Validations & State */}
         <div className="space-y-6">
           {/* Validation Checklist */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+                <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                   Pre-Mint Checklist
                 </CardTitle>
                 <Badge 
                   variant={allPassed ? "default" : "destructive"}
                   className={allPassed 
-                    ? "bg-[hsl(var(--ethblox-green))] text-black" 
+                    ? "bg-[hsl(var(--buidl-green))] text-black" 
                     : "bg-red-500 text-white"
                   }
                 >
@@ -1357,7 +1743,7 @@ export function MintDebugClient() {
                       {v.message}
                     </p>
                     {v.details && (
-                      <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mt-0.5 break-all">
+                      <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-0.5 break-all">
                         {v.details}
                       </p>
                     )}
@@ -1368,9 +1754,9 @@ export function MintDebugClient() {
           </Card>
 
           {/* Wallet State */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+              <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                 Wallet State
               </CardTitle>
             </CardHeader>
@@ -1382,29 +1768,29 @@ export function MintDebugClient() {
               ) : (
                 <>
                   <div className="flex justify-between">
-                    <span className="text-[hsl(var(--ethblox-text-secondary))]">Address</span>
-                    <code className="text-[hsl(var(--ethblox-text-primary))] font-mono text-sm">
+                    <span className="text-[hsl(var(--buidl-text-secondary))]">Address</span>
+                    <code className="text-[hsl(var(--buidl-text-primary))] font-mono text-sm">
                       {account?.slice(0, 6)}...{account?.slice(-4)}
                     </code>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[hsl(var(--ethblox-text-secondary))]">BLOX Balance</span>
-                    <span className="text-[hsl(var(--ethblox-text-primary))]">
+                    <span className="text-[hsl(var(--buidl-text-secondary))]">BLOX Balance</span>
+                    <span className="text-[hsl(var(--buidl-text-primary))]">
                       {contractState.bloxBalance !== null 
                         ? `${ethers.formatEther(contractState.bloxBalance)} BLOX`
                         : "Loading..."}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[hsl(var(--ethblox-text-secondary))]">BLOX Allowance</span>
-                    <span className="text-[hsl(var(--ethblox-text-primary))]">
+                    <span className="text-[hsl(var(--buidl-text-secondary))]">BLOX Allowance</span>
+                    <span className="text-[hsl(var(--buidl-text-primary))]">
                       {contractState.bloxAllowance !== null 
                         ? `${ethers.formatEther(contractState.bloxAllowance)} BLOX`
                         : "Loading..."}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[hsl(var(--ethblox-text-secondary))]">Chain ID</span>
+                    <span className="text-[hsl(var(--buidl-text-secondary))]">Chain ID</span>
                     <span className={contractState.isCorrectChain 
                       ? "text-green-400" 
                       : "text-red-400"
@@ -1426,28 +1812,28 @@ export function MintDebugClient() {
           </Card>
 
           {/* Contract State */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+              <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                 Contract State
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-[hsl(var(--ethblox-text-secondary))]">Next Token ID</span>
-                <code className="text-[hsl(var(--ethblox-text-primary))] font-mono">
+                <span className="text-[hsl(var(--buidl-text-secondary))]">Next Token ID</span>
+                <code className="text-[hsl(var(--buidl-text-primary))] font-mono">
                   {contractState.nextTokenId?.toString() ?? "?"}
                 </code>
               </div>
               <div className="flex justify-between">
-                <span className="text-[hsl(var(--ethblox-text-secondary))]">Max Mass</span>
-                <code className="text-[hsl(var(--ethblox-text-primary))] font-mono">
+                <span className="text-[hsl(var(--buidl-text-secondary))]">Max Mass</span>
+                <code className="text-[hsl(var(--buidl-text-primary))] font-mono">
                   {contractState.maxMass?.toString() ?? "?"}
                 </code>
               </div>
               <div className="flex justify-between">
-                <span className="text-[hsl(var(--ethblox-text-secondary))]">Mint Fee</span>
-                <code className="text-[hsl(var(--ethblox-yellow))] font-mono">
+                <span className="text-[hsl(var(--buidl-text-secondary))]">Mint Fee</span>
+                <code className="text-[hsl(var(--buidl-yellow))] font-mono">
                   {ethers.formatEther(FEE_PER_MINT)} ETH
                 </code>
               </div>
@@ -1455,9 +1841,9 @@ export function MintDebugClient() {
           </Card>
 
           {/* Mint Actions */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))] border-2 border-[hsl(var(--ethblox-yellow)/0.5)]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))] border-2 border-[hsl(var(--buidl-yellow)/0.5)]">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+              <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                 Mint Actions
               </CardTitle>
             </CardHeader>
@@ -1466,7 +1852,7 @@ export function MintDebugClient() {
               <div className="flex items-center justify-between p-3 bg-orange-500/10 rounded-lg border border-orange-500/30">
                 <div>
                   <p className="text-sm font-medium text-orange-400">Skip Validation Checks</p>
-                  <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">
+                  <p className="text-xs text-[hsl(var(--buidl-text-tertiary))]">
                     Enable to bypass failed checks (use for testing)
                   </p>
                 </div>
@@ -1483,33 +1869,61 @@ export function MintDebugClient() {
                 </Button>
               </div>
 
+              {/* Mint Cost Breakdown */}
+              {debugData && (
+                <div className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg border border-[hsl(var(--buidl-border))]">
+                  <p className="text-sm font-medium text-[hsl(var(--buidl-text-primary))] mb-2">Mint Cost</p>
+                  <div className="space-y-1 text-xs text-[hsl(var(--buidl-text-secondary))]">
+                    <div className="flex justify-between">
+                      <span>Mass Collateral ({debugData.totalBloxMass} mass)</span>
+                      <span>{debugData.totalBloxMass} BLOX</span>
+                    </div>
+                    {contractState.licenseFeeEstimate > 0n && (
+                      <div className="flex justify-between">
+                        <span>License Fees ({Object.keys(compositionMap).length} component type{Object.keys(compositionMap).length !== 1 ? "s" : ""})</span>
+                        <span>{ethers.formatEther(contractState.licenseFeeEstimate)} BLOX</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-xs text-[hsl(var(--buidl-text-tertiary))]">
+                      <span>Mint Fee</span>
+                      <span>{ethers.formatEther(FEE_PER_MINT)} ETH</span>
+                    </div>
+                    <Separator className="my-1" />
+                    <div className="flex justify-between font-medium text-[hsl(var(--buidl-text-primary))]">
+                      <span>Total BLOX Required</span>
+                      <span>{ethers.formatEther(BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate)} BLOX</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* BLOX Balance Warning */}
               {contractState.bloxBalance !== null && contractState.bloxBalance === 0n && (
                 <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/30">
                   <p className="text-sm font-medium text-red-400">BLOX Balance is 0</p>
-                  <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mt-1">
-                    You need {ethers.formatEther(BigInt(debugData.totalBloxMass) * 10n ** 18n)} BLOX to mint. 
+                  <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">
+                    You need {ethers.formatEther(BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate)} BLOX to mint.
                     The contract locks BLOX tokens during minting.
                   </p>
                 </div>
               )}
 
               {/* Approve BLOX Button - always show if allowance insufficient */}
-              {contractState.bloxAllowance !== null && 
-               contractState.bloxAllowance < BigInt(debugData.totalBloxMass) * 10n ** 18n && (
+              {contractState.bloxAllowance !== null &&
+               contractState.bloxAllowance < BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate && (
                 <Button
                   onClick={handleApproveBlox}
                   disabled={approving || !isConnected}
                   className="w-full bg-blue-600 hover:bg-blue-700"
                 >
                   {approving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                  {approving ? "Approving..." : `Approve BLOX (${debugData.totalBloxMass} BLOX)`}
+                  {approving ? "Approving..." : `Approve BLOX (${ethers.formatEther(BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate)} BLOX)`}
                 </Button>
               )}
 
               {/* Approve status */}
-              {contractState.bloxAllowance !== null && 
-               contractState.bloxAllowance >= BigInt(debugData.totalBloxMass) * 10n ** 18n && (
+              {contractState.bloxAllowance !== null &&
+               contractState.bloxAllowance >= BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate && (
                 <div className="p-3 bg-green-500/10 rounded-lg border border-green-500/30">
                   <p className="text-sm text-green-400 flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4" />
@@ -1519,32 +1933,13 @@ export function MintDebugClient() {
               )}
 
               {componentTokenIds.length > 0 && (
-                <div className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg border border-[hsl(var(--ethblox-border))] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-[hsl(var(--ethblox-text-primary))]">License handling</p>
-                    <Button
-                      variant={autoBuyMissingLicenses ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setAutoBuyMissingLicenses(!autoBuyMissingLicenses)}
-                      className={autoBuyMissingLicenses ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
-                    >
-                      {autoBuyMissingLicenses ? "Auto-buy ON" : "Auto-buy OFF"}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">
-                    Missing component licenses: {missingLicenseBuildIds.length}
+                <div className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg border border-[hsl(var(--buidl-border))]">
+                  <p className="text-sm text-[hsl(var(--buidl-text-primary))]">
+                    Component licenses handled automatically at mint time
                   </p>
-                  {missingLicenseBuildIds.length > 0 && (
-                    <Button
-                      onClick={handleBuyMissingLicenses}
-                      disabled={buyingLicenses || !isConnected}
-                      variant="outline"
-                      className="w-full border-[hsl(var(--ethblox-accent-cyan))] text-[hsl(var(--ethblox-accent-cyan))] bg-transparent hover:bg-[hsl(var(--ethblox-accent-cyan)/0.1)]"
-                    >
-                      {buyingLicenses && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                      {buyingLicenses ? "Buying Missing Licenses..." : "Buy Missing Licenses Now"}
-                    </Button>
-                  )}
+                  <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">
+                    {componentTokenIds.length} component type(s) — BLOX fee for licenses included in mint tx
+                  </p>
                 </div>
               )}
 
@@ -1553,7 +1948,7 @@ export function MintDebugClient() {
                 onClick={handleRunDiagnostics}
                 disabled={runningDiagnostics || !isConnected || !generatedHash}
                 variant="outline"
-                className="w-full border-[hsl(var(--ethblox-accent-cyan))] text-[hsl(var(--ethblox-accent-cyan))] bg-transparent hover:bg-[hsl(var(--ethblox-accent-cyan)/0.1)]"
+                className="w-full border-[hsl(var(--buidl-accent-cyan))] text-[hsl(var(--buidl-accent-cyan))] bg-transparent hover:bg-[hsl(var(--buidl-accent-cyan)/0.1)]"
               >
                 {runningDiagnostics && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 {runningDiagnostics ? "Running Diagnostics..." : "Run Pre-Mint Diagnostics"}
@@ -1561,13 +1956,13 @@ export function MintDebugClient() {
 
               {/* Diagnostics Results */}
               {diagnostics && (
-                <div className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg border border-[hsl(var(--ethblox-border))] space-y-1 max-h-[600px] overflow-auto">
+                <div className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg border border-[hsl(var(--buidl-border))] space-y-1 max-h-[600px] overflow-auto">
                   <div className="flex justify-between items-center mb-2">
-                    <p className="text-xs font-medium text-[hsl(var(--ethblox-text-primary))]">Diagnostic Results:</p>
+                    <p className="text-xs font-medium text-[hsl(var(--buidl-text-primary))]">Diagnostic Results:</p>
                     <Button 
                       variant="ghost" 
                       size="sm" 
-                      className="h-6 px-2 text-xs text-[hsl(var(--ethblox-accent-cyan))]"
+                      className="h-6 px-2 text-xs text-[hsl(var(--buidl-accent-cyan))]"
                       onClick={() => {
                         const text = Object.entries(diagnostics)
                           .map(([k, v]) => k.startsWith("---") ? `\n${k}` : `${k}: ${String(v ?? "")}`)
@@ -1586,20 +1981,20 @@ export function MintDebugClient() {
                     const isLongValue = value.length > 80
                     
                     if (isSeparator) {
-                      return <Separator key={key} className="bg-[hsl(var(--ethblox-border))] my-2" />
+                      return <Separator key={key} className="bg-[hsl(var(--buidl-border))] my-2" />
                     }
                     
                     if (isLongValue) {
                       return (
                         <div key={key} className="text-xs">
                           <div className="flex justify-between items-center">
-                            <span className="text-[hsl(var(--ethblox-text-secondary))]">{key}</span>
+                            <span className="text-[hsl(var(--buidl-text-secondary))]">{key}</span>
                             <Button variant="ghost" size="sm" className="h-5 px-1 text-xs"
                               onClick={() => copyToClipboard(value, key)}>
                               {copied === key ? "Copied!" : "Copy"}
                             </Button>
                           </div>
-                          <pre className="mt-1 p-2 bg-black/30 rounded text-[10px] font-mono text-[hsl(var(--ethblox-text-tertiary))] break-all whitespace-pre-wrap">
+                          <pre className="mt-1 p-2 bg-black/30 rounded text-[10px] font-mono text-[hsl(var(--buidl-text-tertiary))] break-all whitespace-pre-wrap">
                             {value}
                           </pre>
                         </div>
@@ -1608,9 +2003,9 @@ export function MintDebugClient() {
                     
                     return (
                       <div key={key} className="flex justify-between text-xs gap-2">
-                        <span className="text-[hsl(var(--ethblox-text-secondary))] shrink-0">{key}</span>
+                        <span className="text-[hsl(var(--buidl-text-secondary))] shrink-0">{key}</span>
                         <span className={`font-mono text-right break-all ${
-                          isFail ? "text-red-400" : isPass ? "text-green-400" : "text-[hsl(var(--ethblox-text-primary))]"
+                          isFail ? "text-red-400" : isPass ? "text-green-400" : "text-[hsl(var(--buidl-text-primary))]"
                         }`}>
                           {value}
                         </span>
@@ -1620,35 +2015,63 @@ export function MintDebugClient() {
                 </div>
               )}
 
-              <Separator className="bg-[hsl(var(--ethblox-border))]" />
+              <Separator className="bg-[hsl(var(--buidl-border))]" />
 
               {/* Mint Buttons */}
               <div className="space-y-2">
+                <div className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg border border-[hsl(var(--buidl-border))] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-[hsl(var(--buidl-text-primary))]">Preflight Validation (required)</p>
+                    <Button
+                      onClick={runPreflightValidation}
+                      disabled={preflightRunning || minting || !generatedHash || !isConnected}
+                      variant="outline"
+                      className="h-7 px-2 text-xs bg-transparent"
+                    >
+                      {preflightRunning ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                      {preflightRunning ? "Validating..." : "Run Preflight"}
+                    </Button>
+                  </div>
+                  <div className={`text-xs ${preflightParamsOk ? "text-green-400" : "text-[hsl(var(--buidl-text-tertiary))]"}`}>
+                    1. MintParams valid: {preflightParamsOk ? "PASS" : "PENDING"}
+                  </div>
+                  <div className={`text-xs ${preflightCalldataOk ? "text-green-400" : "text-[hsl(var(--buidl-text-tertiary))]"}`}>
+                    2. Calldata encodes: {preflightCalldataOk ? "PASS" : "PENDING"}
+                  </div>
+                  <div className={`text-xs ${preflightSimOk ? "text-green-400" : "text-[hsl(var(--buidl-text-tertiary))]"}`}>
+                    3. Simulation: {preflightSimOk ? "PASS" : "PENDING"}
+                  </div>
+                  {preflightError ? (
+                    <div className="text-xs text-red-400">Error: {preflightError}</div>
+                  ) : null}
+                </div>
                 <Button
                   onClick={() => handleMint(false)}
-                  disabled={minting || buyingLicenses || !isConnected || !generatedHash || (!canMint && !skipChecks)}
+                  disabled={minting || !isConnected || !generatedHash || !canMintNow}
                   className="w-full bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-500 hover:to-yellow-600 text-black font-bold"
                 >
-                  {(minting || buyingLicenses) && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                  {buyingLicenses
-                    ? "Buying Licenses..."
-                    : minting
-                      ? "Sending TX..."
-                      : `Mint NFT (${ethers.formatEther(FEE_PER_MINT)} ETH + ${MINT_GAS_LIMIT.toString()} gas)`}
+                  {(minting) && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                  {minting
+                    ? "Sending TX..."
+                    : `Mint NFT (${ethers.formatEther(FEE_PER_MINT)} ETH + ${MINT_GAS_LIMIT.toString()} gas)`}
                 </Button>
                 <Button
                   onClick={() => handleMint(true)}
-                  disabled={minting || buyingLicenses || !isConnected || !generatedHash}
+                  disabled={minting || !isConnected || !generatedHash || !preflightPass}
                   variant="outline"
                   className="w-full border-red-500/50 text-red-400 bg-transparent hover:bg-red-500/10"
                 >
-                  {(minting || buyingLicenses) && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                  {(minting) && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                   {`Force Send (${MINT_GAS_LIMIT_FORCE.toString()} gas limit)`}
                 </Button>
-                <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] text-center">
-                  If auto-buy is ON, missing component licenses are purchased before mint.
-                  Mint + license purchase are sequential transactions, not a single on-chain atomic call.
+                <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] text-center">
+                  Licenses are registered, purchased, and escrowed atomically during mint.
                 </p>
+                {!preflightPass && (
+                  <p className="text-xs text-orange-400 text-center">
+                    Mint is locked until preflight validation passes for this exact geometry hash.
+                  </p>
+                )}
               </div>
 
               {/* Mint Status */}
@@ -1659,7 +2082,7 @@ export function MintDebugClient() {
                     href={`${explorerBase}/tx/${mintTxHash}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-[hsl(var(--ethblox-accent-cyan))] flex items-center gap-1 hover:underline"
+                    className="text-xs text-[hsl(var(--buidl-accent-cyan))] flex items-center gap-1 hover:underline"
                   >
                     View on BaseScan <ExternalLink className="h-3 w-3" />
                   </a>
@@ -1669,7 +2092,7 @@ export function MintDebugClient() {
               {mintError && (
                 <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/30">
                   <p className="text-sm font-medium text-red-400 mb-1">Error</p>
-                  <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] break-all">
+                  <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] break-all">
                     {mintError}
                   </p>
                 </div>
@@ -1678,10 +2101,10 @@ export function MintDebugClient() {
           </Card>
 
           {/* Raw JSON Data */}
-          <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+                <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                   Raw Build Data
                 </CardTitle>
                 <Button 
@@ -1696,7 +2119,7 @@ export function MintDebugClient() {
               </div>
             </CardHeader>
             <CardContent>
-              <pre className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg text-xs font-mono text-[hsl(var(--ethblox-text-tertiary))] overflow-auto max-h-64">
+              <pre className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg text-xs font-mono text-[hsl(var(--buidl-text-tertiary))] overflow-auto max-h-64">
                 {JSON.stringify({
                   ...debugData,
                   bricks: `[${debugData.bricks.length} bricks]`, // Truncate for display
@@ -1709,33 +2132,46 @@ export function MintDebugClient() {
 
       {/* Full Width Section - Build Preview & Screenshot */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-        {/* 3D Preview with Auto-Capture */}
-        <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+        {/* 3D WebGL Preview */}
+        <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
-              Build Preview (IPFS Image)
+            <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
+              3D Preview
             </CardTitle>
-            <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mt-1">
-              Standardized camera angle: 45° horizontal, 35° elevation. Auto-captures on load.
+            <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">
+              Interactive WebGL preview of the build geometry. Drag to rotate.
             </p>
           </CardHeader>
           <CardContent>
-            <StandardBuildCapture
-              bricks={debugData.bricks}
-              buildName={debugData.buildName}
-              buildId={debugData.buildId}
-              autoCapture={true}
-              onCapture={(dataUrl) => setScreenshotUrl(dataUrl)}
-              showControls={true}
-            />
+            <div className="w-full h-[400px] rounded-lg overflow-hidden">
+              <BuildVoxelPreview
+                bricks={debugData.bricks}
+                showStuds={true}
+                sceneMode="marketplace"
+                className="w-full h-full"
+              />
+            </div>
+            <div className="mt-3">
+              <StandardBuildCapture
+                bricks={debugData.bricks}
+                buildName={debugData.buildName}
+                buildId={debugData.buildId}
+                autoCapture={true}
+                onCapture={(dataUrl) => {
+                  screenshotUrlRef.current = dataUrl
+                  setScreenshotUrl(dataUrl)
+                }}
+                showControls={true}
+              />
+            </div>
           </CardContent>
         </Card>
 
         {/* Full Build Data (Geometry Hash Source) */}
-        <Card className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+        <Card className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg text-[hsl(var(--ethblox-text-primary))]">
+              <CardTitle className="text-lg text-[hsl(var(--buidl-text-primary))]">
                 Full Build Data (Geometry Hash Source)
               </CardTitle>
               <Button 
@@ -1764,11 +2200,11 @@ export function MintDebugClient() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mb-3">
+            <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mb-3">
               This is the normalized data used to generate the geometryHash. 
               The hash is deterministic based on brick positions, colors, and dimensions.
             </p>
-            <pre className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg text-xs font-mono text-[hsl(var(--ethblox-text-secondary))] overflow-auto max-h-96">
+            <pre className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg text-xs font-mono text-[hsl(var(--buidl-text-secondary))] overflow-auto max-h-96">
 {JSON.stringify({
   buildId: debugData.buildId,
   buildName: debugData.buildName,

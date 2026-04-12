@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator"
 import { type BrickNFT, formatBrickName, BRICK_DENSITIES, calculateMass } from "@/data/bricks"
 import { Box, Layers, Weight, Sparkles } from "lucide-react"
 import { ethers } from "ethers"
-import { FEE_PER_MINT } from "@/lib/contracts/ethblox-contracts"
+import { FEE_PER_MINT } from "@/lib/contracts/buidl-contracts"
 import { Canvas, useFrame } from "@react-three/fiber"
 import * as THREE from "three"
 
@@ -152,20 +152,20 @@ export function BrickMintModal({ open, onOpenChange, brick, onMintSuccess }: Bri
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+      <DialogContent className="sm:max-w-md bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
         <DialogHeader>
-          <DialogTitle className="text-[hsl(var(--ethblox-text-primary))] flex items-center gap-2">
-            <Box className="h-5 w-5 text-[hsl(var(--ethblox-yellow))]" />
+          <DialogTitle className="text-[hsl(var(--buidl-text-primary))] flex items-center gap-2">
+            <Box className="h-5 w-5 text-[hsl(var(--buidl-yellow))]" />
             Mint This Brick
           </DialogTitle>
-          <DialogDescription className="text-[hsl(var(--ethblox-text-secondary))]">
+          <DialogDescription className="text-[hsl(var(--buidl-text-secondary))]">
             Be the first to mint and own this brick. Once minted, you can use it in any build.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           {/* 3D Glass Brick Preview */}
-          <div className="relative rounded-lg border border-[hsl(var(--ethblox-border))] overflow-hidden bg-[hsl(var(--ethblox-bg))]">
+          <div className="relative rounded-lg border border-[hsl(var(--buidl-border))] overflow-hidden bg-[hsl(var(--buidl-bg))]">
             <div className="h-40">
               {isMounted ? (
                 <Canvas camera={{ position: [2.5, 2, 2.5], fov: 45 }} gl={{ alpha: true }}>
@@ -177,7 +177,7 @@ export function BrickMintModal({ open, onOpenChange, brick, onMintSuccess }: Bri
                 </Canvas>
               ) : null}
             </div>
-            <p className="text-center text-lg font-bold text-[hsl(var(--ethblox-text-primary))] pb-3">
+            <p className="text-center text-lg font-bold text-[hsl(var(--buidl-text-primary))] pb-3">
               {formatBrickName({ ...brick, density: selectedDensity as BrickNFT["density"] })}
             </p>
           </div>
@@ -186,7 +186,7 @@ export function BrickMintModal({ open, onOpenChange, brick, onMintSuccess }: Bri
           <>
               {/* Density Selector */}
               <div className="space-y-2">
-                <p className="text-xs font-medium text-[hsl(var(--ethblox-text-secondary))]">Select Density</p>
+                <p className="text-xs font-medium text-[hsl(var(--buidl-text-secondary))]">Select Density</p>
                 <div className="grid grid-cols-5 gap-1.5">
                   {BRICK_DENSITIES.map((d) => {
                     const isSelected = selectedDensity === d
@@ -196,14 +196,14 @@ export function BrickMintModal({ open, onOpenChange, brick, onMintSuccess }: Bri
                         onClick={() => setSelectedDensity(d)}
                         className={`flex flex-col items-center gap-0.5 p-2 rounded-lg border transition-all ${
                           isSelected 
-                            ? "border-[hsl(var(--ethblox-yellow))] bg-[hsl(var(--ethblox-yellow)/0.15)]"
-                            : "border-[hsl(var(--ethblox-border))] bg-[hsl(var(--ethblox-bg))] hover:border-[hsl(var(--ethblox-text-tertiary))]"
+                            ? "border-[hsl(var(--buidl-yellow))] bg-[hsl(var(--buidl-yellow)/0.15)]"
+                            : "border-[hsl(var(--buidl-border))] bg-[hsl(var(--buidl-bg))] hover:border-[hsl(var(--buidl-text-tertiary))]"
                         }`}
                       >
-                        <span className={`text-sm font-bold ${isSelected ? "text-[hsl(var(--ethblox-yellow))]" : "text-[hsl(var(--ethblox-text-primary))]"}`}>
+                        <span className={`text-sm font-bold ${isSelected ? "text-[hsl(var(--buidl-yellow))]" : "text-[hsl(var(--buidl-text-primary))]"}`}>
                           {d}
                         </span>
-                        <span className="text-[10px] text-[hsl(var(--ethblox-text-tertiary))]">
+                        <span className="text-[10px] text-[hsl(var(--buidl-text-tertiary))]">
                           {DENSITY_LABELS[d]}
                         </span>
                       </button>
@@ -213,40 +213,40 @@ export function BrickMintModal({ open, onOpenChange, brick, onMintSuccess }: Bri
               </div>
 
               <div className="grid grid-cols-3 gap-3">
-                <div className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg text-center">
-                  <Layers className="h-4 w-4 mx-auto mb-1 text-[hsl(var(--ethblox-text-tertiary))]" />
-                  <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">Size</p>
-                  <p className="text-sm font-semibold text-[hsl(var(--ethblox-text-primary))]">
+                <div className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg text-center">
+                  <Layers className="h-4 w-4 mx-auto mb-1 text-[hsl(var(--buidl-text-tertiary))]" />
+                  <p className="text-xs text-[hsl(var(--buidl-text-tertiary))]">Size</p>
+                  <p className="text-sm font-semibold text-[hsl(var(--buidl-text-primary))]">
                     {minDim}x{maxDim}
                   </p>
                 </div>
-                <div className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg text-center">
-                  <Weight className="h-4 w-4 mx-auto mb-1 text-[hsl(var(--ethblox-text-tertiary))]" />
-                  <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">Mass</p>
-                  <p className="text-sm font-semibold text-[hsl(var(--ethblox-text-primary))]">
+                <div className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg text-center">
+                  <Weight className="h-4 w-4 mx-auto mb-1 text-[hsl(var(--buidl-text-tertiary))]" />
+                  <p className="text-xs text-[hsl(var(--buidl-text-tertiary))]">Mass</p>
+                  <p className="text-sm font-semibold text-[hsl(var(--buidl-text-primary))]">
                     {mass}
                   </p>
                 </div>
-                <div className="p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg text-center">
-                  <Box className="h-4 w-4 mx-auto mb-1 text-[hsl(var(--ethblox-text-tertiary))]" />
-                  <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">Density</p>
-                  <p className="text-sm font-semibold text-[hsl(var(--ethblox-yellow))]">
+                <div className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg text-center">
+                  <Box className="h-4 w-4 mx-auto mb-1 text-[hsl(var(--buidl-text-tertiary))]" />
+                  <p className="text-xs text-[hsl(var(--buidl-text-tertiary))]">Density</p>
+                  <p className="text-sm font-semibold text-[hsl(var(--buidl-yellow))]">
                     {selectedDensity}
                   </p>
                 </div>
               </div>
 
-              <Separator className="bg-[hsl(var(--ethblox-border))]" />
+              <Separator className="bg-[hsl(var(--buidl-border))]" />
 
               {/* Scarcity Info */}
-              <div className="p-3 bg-[hsl(var(--ethblox-yellow)/0.1)] rounded-lg border border-[hsl(var(--ethblox-yellow)/0.3)]">
+              <div className="p-3 bg-[hsl(var(--buidl-yellow)/0.1)] rounded-lg border border-[hsl(var(--buidl-yellow)/0.3)]">
                 <div className="flex items-start gap-2">
-                  <Sparkles className="h-4 w-4 text-[hsl(var(--ethblox-yellow))] mt-0.5 flex-shrink-0" />
+                  <Sparkles className="h-4 w-4 text-[hsl(var(--buidl-yellow))] mt-0.5 flex-shrink-0" />
                   <div>
-                    <p className="text-sm font-medium text-[hsl(var(--ethblox-yellow))]">
+                    <p className="text-sm font-medium text-[hsl(var(--buidl-yellow))]">
                       Unique Brick NFT
                     </p>
-                    <p className="text-xs text-[hsl(var(--ethblox-text-secondary))] mt-1">
+                    <p className="text-xs text-[hsl(var(--buidl-text-secondary))] mt-1">
                       Only one {minDim}x{maxDim} brick with density {selectedDensity} can exist. 
                       As the owner, you earn fees when others use this brick in their builds.
                     </p>
@@ -255,9 +255,9 @@ export function BrickMintModal({ open, onOpenChange, brick, onMintSuccess }: Bri
               </div>
 
               {/* Mint Fee */}
-              <div className="flex items-center justify-between p-3 bg-[hsl(var(--ethblox-bg))] rounded-lg">
-                <span className="text-sm text-[hsl(var(--ethblox-text-secondary))]">Mint Fee</span>
-                <span className="text-lg font-bold text-[hsl(var(--ethblox-green))]">
+              <div className="flex items-center justify-between p-3 bg-[hsl(var(--buidl-bg))] rounded-lg">
+                <span className="text-sm text-[hsl(var(--buidl-text-secondary))]">Mint Fee</span>
+                <span className="text-lg font-bold text-[hsl(var(--buidl-green))]">
                   {mintFeeETH} ETH
                 </span>
               </div>
@@ -268,13 +268,13 @@ export function BrickMintModal({ open, onOpenChange, brick, onMintSuccess }: Bri
           <div className="flex gap-3">
             <Button
               variant="outline"
-              className="flex-1 border-[hsl(var(--ethblox-border))] text-[hsl(var(--ethblox-text-secondary))] bg-transparent hover:bg-[hsl(var(--ethblox-surface-elevated))]"
+              className="flex-1 border-[hsl(var(--buidl-border))] text-[hsl(var(--buidl-text-secondary))] bg-transparent hover:bg-[hsl(var(--buidl-surface-elevated))]"
               onClick={handleClose}
             >
               Cancel
             </Button>
             <Button
-              className="flex-1 bg-[hsl(var(--ethblox-yellow))] text-black hover:bg-[hsl(var(--ethblox-yellow)/0.9)] font-semibold"
+              className="flex-1 bg-[hsl(var(--buidl-yellow))] text-black hover:bg-[hsl(var(--buidl-yellow)/0.9)] font-semibold"
               onClick={handleMintRedirect}
             >
               Mint for {mintFeeETH} ETH
@@ -282,7 +282,7 @@ export function BrickMintModal({ open, onOpenChange, brick, onMintSuccess }: Bri
           </div>
           <Button
             variant="ghost"
-            className="w-full text-xs text-[hsl(var(--ethblox-text-tertiary))] hover:text-[hsl(var(--ethblox-text-secondary))] hover:bg-transparent"
+            className="w-full text-xs text-[hsl(var(--buidl-text-tertiary))] hover:text-[hsl(var(--buidl-text-secondary))] hover:bg-transparent"
             onClick={handlePlaceAnyway}
           >
             Place anyway (skip minting)

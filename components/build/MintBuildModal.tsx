@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { ChevronDown, ChevronUp, X, Loader2, ExternalLink, CheckCircle2, AlertCircle, Bug } from "lucide-react"
-import { MintPreviewCanvas } from "./MintPreviewCanvas"
+import { StandardBuildCapture } from "./StandardBuildCapture"
 import type { Brick } from "@/lib/types"
 import { useMetaMask } from "@/contexts/metamask-context"
 import { generateBuildHash } from "@/lib/build-hash"
@@ -21,13 +21,10 @@ import {
   getNextTokenId,
   approveBlox,
   mintBuildNFTWithParams,
-  getComponentLicenseStatus,
-  buyMissingLicensesForComponents,
-  isLicenseApproved,
-  approveLicenseNFT,
   isHashMinted,
   addMintedHash,
-} from "@/lib/contracts/ethblox-contracts"
+} from "@/lib/contracts/buidl-contracts"
+import { FEATURES } from "@/lib/feature-flags"
 
 interface MintBuildModalProps {
   open: boolean
@@ -105,6 +102,16 @@ export function MintBuildModal({
   const [needsApproval, setNeedsApproval] = useState(false)
   const [autoBuyMissingLicenses, setAutoBuyMissingLicenses] = useState(true)
   const [missingLicenseCount, setMissingLicenseCount] = useState(0)
+  const [ipfsCheckpointRunning, setIpfsCheckpointRunning] = useState(false)
+  const [ipfsCheckpointCaptureOk, setIpfsCheckpointCaptureOk] = useState(false)
+  const [ipfsCheckpointUploadOk, setIpfsCheckpointUploadOk] = useState(false)
+  const [ipfsCheckpointCid, setIpfsCheckpointCid] = useState<string | null>(null)
+  const [ipfsCheckpointError, setIpfsCheckpointError] = useState<string | null>(null)
+  const [ipfsCheckpointHash, setIpfsCheckpointHash] = useState<string | null>(null)
+  const [marketplacePublishRequired, setMarketplacePublishRequired] = useState(false)
+  const [marketplacePublishError, setMarketplacePublishError] = useState<string | null>(null)
+  const [marketplacePublishBusy, setMarketplacePublishBusy] = useState(false)
+  const [marketplacePublishDone, setMarketplacePublishDone] = useState(false)
 
   const { account, isConnected, switchChain } = useMetaMask()
   const router = useRouter()
@@ -124,11 +131,12 @@ export function MintBuildModal({
       totalBloxMass,
       uniqueColors: new Set(bricks.map((b) => b.color)).size,
       composition,
+      density: 1,
       metadata,
       account,
       timestamp: Date.now(),
     }
-    sessionStorage.setItem("ethblox_mint_debug", JSON.stringify(mintDebugData))
+    sessionStorage.setItem("buidl_mint_debug", JSON.stringify(mintDebugData))
     onOpenChange(false)
     router.push("/mint-debug")
   }
@@ -181,6 +189,7 @@ export function MintBuildModal({
     if (!open || !isConnected || !account) return
 
     const fetchContractData = async () => {
+      let savePayload: any = null
       try {
         const ethereum = (window as any).ethereum
         if (!ethereum) return
@@ -218,6 +227,52 @@ export function MintBuildModal({
   }, [open, isConnected, account, totalBloxMass])
 
   useEffect(() => {
+    setIpfsCheckpointCaptureOk(false)
+    setIpfsCheckpointUploadOk(false)
+    setIpfsCheckpointCid(null)
+    setIpfsCheckpointError(null)
+    setIpfsCheckpointHash(null)
+  }, [buildHash, screenshotDataUrl])
+
+  const runIpfsCheckpoints = async () => {
+    setIpfsCheckpointRunning(true)
+    setIpfsCheckpointError(null)
+    setIpfsCheckpointCaptureOk(false)
+    setIpfsCheckpointUploadOk(false)
+    setIpfsCheckpointCid(null)
+    setIpfsCheckpointHash(null)
+    try {
+      if (!buildHash || !/^0x[0-9a-fA-F]{64}$/.test(buildHash)) {
+        throw new Error("Build hash is not ready.")
+      }
+      if (!screenshotDataUrl || !screenshotDataUrl.startsWith("data:image/")) {
+        throw new Error("Preview capture is not ready.")
+      }
+      setIpfsCheckpointCaptureOk(true)
+      const res = await fetch("/api/builds/ipfs-preflight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          buildHash,
+          screenshotDataUrl,
+          tokenHint: tokenId?.toString() || "",
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || `Preflight failed (${res.status})`)
+      }
+      setIpfsCheckpointUploadOk(true)
+      setIpfsCheckpointCid(String(json.imageCid))
+      setIpfsCheckpointHash(buildHash.toLowerCase())
+    } catch (err: any) {
+      setIpfsCheckpointError(err?.message || "IPFS checkpoint failed")
+    } finally {
+      setIpfsCheckpointRunning(false)
+    }
+  }
+
+  useEffect(() => {
     if (!open || !isConnected || !account) {
       setMissingLicenseCount(0)
       return
@@ -246,7 +301,7 @@ export function MintBuildModal({
 
   const buildJsonData = {
     version: "0.1",
-    sceneType: "ethblox-v0",
+    sceneType: "buidl-v0",
     buildId: buildId,
     buildHash: buildHash,
     composition: composition,
@@ -328,8 +383,27 @@ export function MintBuildModal({
 
     setErrorMessage(null)
     setMintStep("idle")
+    setMarketplacePublishRequired(false)
+    setMarketplacePublishError(null)
+    setMarketplacePublishDone(false)
 
     try {
+      // IPFS checkpoints only required when IPFS pipeline is enabled
+      if (FEATURES.IPFS_ENABLED) {
+        const checkpointPass =
+          ipfsCheckpointCaptureOk &&
+          ipfsCheckpointUploadOk &&
+          !!ipfsCheckpointCid &&
+          !!ipfsCheckpointHash &&
+          !!buildHash &&
+          ipfsCheckpointHash === buildHash.toLowerCase()
+        if (!checkpointPass) {
+          setErrorMessage("Run IPFS checkpoints first and wait for all checks to pass.")
+          setMintStep("error")
+          return
+        }
+      }
+
       const provider = new ethers.BrowserProvider(ethereum)
       const componentEntries = Object.entries(composition).filter(([id, data]) => Number(id) > 0 && data.count > 0)
       const componentBuildIds = componentEntries.map(([id]) => BigInt(id))
@@ -353,29 +427,8 @@ export function MintBuildModal({
         setNeedsApproval(false)
       }
 
-      if (componentBuildIds.length > 0) {
-        const status = await getComponentLicenseStatus(provider, account, componentBuildIds)
-        if (status.missingComponentBuildIds.length > 0) {
-          if (!autoBuyMissingLicenses) {
-            throw new Error(
-              `Missing licenses for component builds: ${status.missingComponentBuildIds.map((id) => id.toString()).join(", ")}.`,
-            )
-          }
-          setMintStep("buyingLicenses")
-          const purchaseResult = await buyMissingLicensesForComponents(provider, account, componentBuildIds)
-          if (purchaseResult.txHashes.length > 0 || purchaseResult.registeredBuilds.length > 0) {
-            const refreshed = await getComponentLicenseStatus(provider, account, componentBuildIds)
-            setMissingLicenseCount(refreshed.missingComponentBuildIds.length)
-          }
-        }
-
-        const licenseApproved = await isLicenseApproved(provider, account, CONTRACTS.BUILD_NFT)
-        if (!licenseApproved) {
-          setMintStep("approvingLicenses")
-          const licenseApproveTx = await approveLicenseNFT(provider, CONTRACTS.BUILD_NFT, true)
-          await licenseApproveTx.wait()
-        }
-      }
+      // V3: License purchasing is handled atomically by BuildNFT.mint() via ETH.
+      // No need to pre-buy licenses or approve LicenseNFT transfers.
 
       setMintStep("minting")
       console.log("[v0] Minting NFT with hash:", buildHash, "mass:", totalBloxMass)
@@ -386,9 +439,10 @@ export function MintBuildModal({
       const mintTx = await mintBuildNFTWithParams(provider, {
         geometryHash: buildHash,
         mass: totalBloxMass,
-        uri: "",
+        geometryData: new Uint8Array(0),
         componentBuildIds,
         componentCounts,
+        manifest: [],
         kind: BUILD_KIND.BUILD,
         width: baseWidth,
         depth: baseDepth,
@@ -432,29 +486,67 @@ export function MintBuildModal({
             bricks,
             baseWidth,
             baseDepth,
+            screenshotDataUrl,
           }),
         })
 
-        if (!saveResponse.ok) {
-          console.error("[v0] Failed to save mint data to database")
-        } else {
-          console.log("[v0] Mint data saved to database")
+        savePayload = await saveResponse.json().catch(() => null)
+        if (!saveResponse.ok || savePayload?.success === false) {
+          if (savePayload?.requiresIpfsSync) {
+            try {
+              const signer = await provider.getSigner()
+              const ownerSig = await signer.signMessage(`BUIDL_IPFS_PUSH:${nextId.toString()}`)
+              const retryRes = await fetch(`/api/builds/ipfs-push/${nextId.toString()}`, {
+                method: "POST",
+                headers: {
+                  "x-owner-address": account,
+                  "x-owner-signature": ownerSig,
+                },
+              })
+              const retryPayload = await retryRes.json().catch(() => null)
+              if (!retryRes.ok || !retryPayload?.success) {
+                const err =
+                  retryPayload?.error ||
+                  savePayload?.error ||
+                  `Mint succeeded but IPFS retry failed (HTTP ${retryRes.status}).`
+                throw new Error(err)
+              }
+            } catch (retryErr: any) {
+              const err =
+                retryErr?.message ||
+                savePayload?.error ||
+                `Mint succeeded but post-mint sync failed (HTTP ${saveResponse.status}).`
+              throw new Error(err)
+            }
+          } else {
+            const err =
+              savePayload?.error ||
+              `Mint succeeded but post-mint sync failed (HTTP ${saveResponse.status}).`
+            throw new Error(err)
+          }
         }
+        setMarketplacePublishRequired(Boolean(savePayload?.marketplacePublishRequired))
+        if (savePayload?.marketplacePublishRequired && savePayload?.marketplacePublish?.reason) {
+          setMarketplacePublishError(String(savePayload.marketplacePublish.reason))
+        }
+        setMarketplacePublishDone(Boolean(savePayload?.marketplacePublish?.ok))
+        console.log("[v0] Mint data + IPFS sync saved")
       } catch (dbError) {
         console.error("[v0] Database save error:", dbError)
+        throw dbError
       }
 
       setMintStep("success")
 
-      setTimeout(() => {
-        onOpenChange(false)
-        setTimeout(() => {
-          setMintStep("idle")
-          setErrorMessage(null)
-          setTxHash(null)
-          setTokenId(null)
-        }, 500)
-      }, 5000)
+      const qs = new URLSearchParams({
+        mintSuccess: "1",
+        tokenId: nextId.toString(),
+      })
+      if (savePayload?.marketplacePublishRequired) {
+        qs.set("publishRequired", "1")
+      }
+      onOpenChange(false)
+      router.push(`/explore?${qs.toString()}`)
     } catch (error: any) {
       console.error("[v0] Error during mint:", error)
       let message = "Transaction failed. Please try again."
@@ -484,12 +576,48 @@ export function MintBuildModal({
     }
   }
 
+  const handlePublishMarketplace = async () => {
+    if (!tokenId || !account) return
+    try {
+      setMarketplacePublishBusy(true)
+      setMarketplacePublishError(null)
+      const provider = new ethers.BrowserProvider((window as any).ethereum)
+      const signer = await provider.getSigner()
+      const message = `BUIDL_MARKETPLACE_PUBLISH:${tokenId.toString()}`
+      const sig = await signer.signMessage(message)
+      const res = await fetch(`/api/builds/marketplace-publish/${tokenId.toString()}`, {
+        method: "POST",
+        headers: {
+          "x-owner-address": account,
+          "x-owner-signature": sig,
+        },
+      })
+      const payload = await res.json().catch(() => null)
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.error || `Marketplace publish failed (${res.status})`)
+      }
+      if (payload?.pending) {
+        setMarketplacePublishRequired(true)
+        setMarketplacePublishDone(false)
+        if (payload?.message) setMarketplacePublishError(String(payload.message))
+      } else {
+        setMarketplacePublishRequired(false)
+        setMarketplacePublishDone(true)
+      }
+    } catch (err: any) {
+      setMarketplacePublishError(err?.message || "Marketplace publish failed")
+    } finally {
+      setMarketplacePublishBusy(false)
+    }
+  }
+
   const getButtonText = () => {
     if (mintStep === "approving") return "Approving BLOX..."
     if (mintStep === "buyingLicenses") return "Buying Missing Licenses..."
     if (mintStep === "approvingLicenses") return "Approving License NFT..."
     if (mintStep === "minting") return "Minting NFT..."
     if (mintStep === "success") return "Minted!"
+    if (!screenshotDataUrl) return "Confirm Mint"
     if (needsApproval) return "Approve BLOX"
     return "Confirm Mint"
   }
@@ -554,6 +682,33 @@ export function MintBuildModal({
                 View NFT on BaseScan <ExternalLink className="h-4 w-4" />
               </a>
             )}
+            {marketplacePublishDone ? (
+              <div className="text-sm text-green-300">Marketplace publish: completed.</div>
+            ) : null}
+            {marketplacePublishRequired ? (
+              <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                <p className="text-sm text-amber-200 mb-2">
+                  Mint succeeded. Marketplace sync still needed.
+                </p>
+                {marketplacePublishError ? (
+                  <p className="text-xs text-amber-100 mb-2">{marketplacePublishError}</p>
+                ) : null}
+                <Button
+                  onClick={handlePublishMarketplace}
+                  disabled={marketplacePublishBusy}
+                  className="bg-amber-500 hover:bg-amber-400 text-black"
+                >
+                  {marketplacePublishBusy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Pushing...
+                    </>
+                  ) : (
+                    "Push to Marketplace"
+                  )}
+                </Button>
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -704,13 +859,42 @@ export function MintBuildModal({
           </div>
 
           <div>
-            <MintPreviewCanvas
+            <StandardBuildCapture
               bricks={bricks}
-              baseWidth={baseWidth}
-              baseDepth={baseDepth}
-              onScreenshotCaptured={setScreenshotDataUrl}
-              screenshotDataUrl={screenshotDataUrl}
+              buildId={buildId}
+              buildName={buildName}
+              autoCapture={true}
+              onCapture={setScreenshotDataUrl}
+              showControls={true}
             />
+            {FEATURES.IPFS_ENABLED && (
+            <div className="mt-3 p-3 rounded-lg border border-[hsl(210,8%,28%)] bg-[hsl(210,11%,15%)]">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-white">IPFS Checkpoints</span>
+                <Button
+                  onClick={runIpfsCheckpoints}
+                  disabled={ipfsCheckpointRunning || isLoading || isSuccess}
+                  variant="outline"
+                  className="h-8 rounded-full border-[hsl(210,8%,28%)] hover:bg-[hsl(210,11%,22%)]"
+                >
+                  {ipfsCheckpointRunning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  {ipfsCheckpointRunning ? "Running..." : "Run Checkpoints"}
+                </Button>
+              </div>
+              <div className="space-y-1 text-xs">
+                <div className={ipfsCheckpointCaptureOk ? "text-green-400" : "text-gray-400"}>
+                  1. Capture ready: {ipfsCheckpointCaptureOk ? "PASS" : "PENDING"}
+                </div>
+                <div className={ipfsCheckpointUploadOk ? "text-green-400" : "text-gray-400"}>
+                  2. Preflight upload: {ipfsCheckpointUploadOk ? "PASS" : "PENDING"}
+                </div>
+                <div className={ipfsCheckpointCid ? "text-green-400" : "text-gray-400"}>
+                  3. CID locked: {ipfsCheckpointCid ? `${ipfsCheckpointCid.slice(0, 12)}...` : "PENDING"}
+                </div>
+                {ipfsCheckpointError ? <div className="text-red-400">Error: {ipfsCheckpointError}</div> : null}
+              </div>
+            </div>
+            )}
           </div>
         </div>
 
@@ -751,7 +935,18 @@ export function MintBuildModal({
             </Button>
             <Button
               onClick={handleConfirmMint}
-              disabled={isLoading || isSuccess}
+              disabled={
+                isLoading ||
+                isSuccess ||
+                (FEATURES.IPFS_ENABLED && !(
+                  ipfsCheckpointCaptureOk &&
+                  ipfsCheckpointUploadOk &&
+                  !!ipfsCheckpointCid &&
+                  !!ipfsCheckpointHash &&
+                  !!buildHash &&
+                  ipfsCheckpointHash === buildHash.toLowerCase()
+                ))
+              }
               className="rounded-full bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-500 hover:to-yellow-600 text-black font-bold"
             >
               {isLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}

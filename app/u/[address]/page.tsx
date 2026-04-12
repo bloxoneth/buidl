@@ -12,8 +12,8 @@ export async function generateMetadata({ params }: PageProps) {
   const shortAddr = `${address.slice(0, 6)}...${address.slice(-4)}`
   
   return {
-    title: `${shortAddr} | BASEBLOX Builder`,
-    description: `View the BASEBLOX builder profile for ${shortAddr}`,
+    title: `${shortAddr} | BUIDL Builder`,
+    description: `View the BUIDL builder profile for ${shortAddr}`,
   }
 }
 

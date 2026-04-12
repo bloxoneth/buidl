@@ -4,7 +4,7 @@ import { Canvas } from "@react-three/fiber"
 import { OrbitControls } from "@react-three/drei"
 import { useMemo, useState } from "react"
 import * as THREE from "three"
-import { tokenImageGatewayURL } from "@/lib/contracts/ethblox-contracts"
+import { tokenImageGatewayURL } from "@/lib/contracts/buidl-contracts"
 
 type Brick = {
   color?: string
@@ -212,7 +212,7 @@ export function BuildVoxelPreview({
   const backupImage = imageUrl || (tokenId !== undefined && tokenId !== null ? tokenImageGatewayURL(tokenId) : "")
 
   const fallbackNode = (
-    <div className={`${className ?? "w-full h-full"} bg-[hsl(var(--ethblox-surface))]`}>
+    <div className={`${className ?? "w-full h-full"} bg-[hsl(var(--buidl-surface))]`}>
       {!imageFailed && backupImage ? (
         <img
           src={backupImage}

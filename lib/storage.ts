@@ -8,7 +8,7 @@ export type SavedBuild = {
   baseDepth: number
 }
 
-const STORAGE_KEY = "ethblox_saves"
+const STORAGE_KEY = "buidl_saves"
 
 export function saveBuild(
   name: string,

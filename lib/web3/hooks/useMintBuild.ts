@@ -13,14 +13,11 @@ import {
   mintBuildNFT,
   mintBuildNFTWithParams,
   mintBuild,
-  getLicenseIds,
-  getLicenseBalances,
-  isLicenseApproved,
-  approveLicenseNFT,
   calculateBloxLock,
   addMintedHash,
   type BrickSpec,
-} from "@/lib/contracts/ethblox-contracts"
+  type PlacedComponent,
+} from "@/lib/contracts/buidl-contracts"
 
 export type MintStep =
   | "idle"
@@ -51,6 +48,9 @@ export interface MintBuildParams {
   mass: number
   kind?: number
   componentTokenIds?: bigint[]
+  componentCounts?: bigint[]
+  geometryData?: Uint8Array
+  manifest?: PlacedComponent[]
 }
 
 export function useMintBuild(options: UseMintBuildOptions = {}) {
@@ -70,7 +70,7 @@ export function useMintBuild(options: UseMintBuildOptions = {}) {
   }, [])
 
   const checkRequirements = useCallback(
-    async (mass: number, componentTokenIds: bigint[] = []) => {
+    async (mass: number, _componentTokenIds: bigint[] = [], _componentCounts: bigint[] = []) => {
       if (!account || !isConnected) {
         throw new Error("Please connect your wallet")
       }
@@ -97,30 +97,12 @@ export function useMintBuild(options: UseMintBuildOptions = {}) {
 
       const needsBloxApproval = allowance < requiredBlox
 
-      // Check licenses if components are being used
-      let needsLicenseApproval = false
-      let missingLicenses: bigint[] = []
-
-      if (componentTokenIds.length > 0) {
-        const licenseIds = await getLicenseIds(provider, componentTokenIds)
-        if (licenseIds.length > 0) {
-          const licenseBalances = await getLicenseBalances(provider, account, licenseIds)
-
-          // Check which licenses are missing (need at least 1 of each)
-          missingLicenses = licenseIds.filter((_, i) => licenseBalances[i] < 1n)
-
-          if (missingLicenses.length > 0) {
-            throw new Error(`Missing required licenses: ${missingLicenses.map((id) => id.toString()).join(", ")}`)
-          }
-
-          // Check if BuildNFT is approved to escrow licenses
-          needsLicenseApproval = !(await isLicenseApproved(provider, account, CONTRACTS.BUILD_NFT))
-        }
-      }
+      // V3: Licenses are purchased atomically during mint via ETH.
+      // No need to pre-check or pre-approve license transfers.
 
       return {
         needsBloxApproval,
-        needsLicenseApproval,
+        needsLicenseApproval: false,
         requiredBlox,
       }
     },
@@ -207,9 +189,10 @@ export function useMintBuild(options: UseMintBuildOptions = {}) {
         const mintTx = await mintBuildNFTWithParams(provider, {
           geometryHash: params.geometryHash,
           mass: brickMass,
-          uri: "",
+          geometryData: new Uint8Array(0),
           componentBuildIds: [],
           componentCounts: [],
+          manifest: [],
           kind: BUILD_KIND.BRICK,
           width: params.spec.width,
           depth: params.spec.depth,
@@ -265,11 +248,13 @@ export function useMintBuild(options: UseMintBuildOptions = {}) {
         if (!provider) throw new Error("No provider available")
 
         const componentTokenIds = params.componentTokenIds || []
+        const componentCounts = params.componentCounts || componentTokenIds.map(() => 1n)
         const kind = params.kind || (componentTokenIds.length > 0 ? BUILD_KIND.BUILD : BUILD_KIND.BRICK)
 
         const { needsBloxApproval, needsLicenseApproval, requiredBlox } = await checkRequirements(
           params.mass,
           componentTokenIds,
+          componentCounts,
         )
 
         // Approve BLOX if needed
@@ -292,7 +277,16 @@ export function useMintBuild(options: UseMintBuildOptions = {}) {
 
         // Mint the build
         setStep("minting")
-        const mintTx = await mintBuild(provider, params.geometryHash, params.mass, kind, componentTokenIds)
+        const mintTx = await mintBuild(
+          provider,
+          params.geometryHash,
+          params.mass,
+          kind,
+          componentTokenIds,
+          componentCounts,
+          params.geometryData || new Uint8Array(0),
+          params.manifest || [],
+        )
         setTxHash(mintTx.hash)
 
         await mintTx.wait()

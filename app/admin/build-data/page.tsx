@@ -259,7 +259,7 @@ export default function BuildDataPage() {
 
                                 const fullBuildJson = {
                                   version: "0.1",
-                                  sceneType: "ethblox-v0",
+                                  sceneType: "buidl-v0",
                                   buildId: build.key,
                                   buildHash: build.geoHash || "",
                                   composition: parsedComposition,

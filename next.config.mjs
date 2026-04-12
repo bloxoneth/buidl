@@ -45,6 +45,8 @@ const nextConfig = {
     unoptimized: true,
   },
   async headers() {
+    // Relaxed CSP in development; tighten for production
+    if (process.env.NODE_ENV === "development") return []
     return [
       {
         source: "/:path*",
@@ -53,13 +55,13 @@ const nextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://va.vercel-scripts.com",
               "worker-src 'self' blob:",
-              "child-src 'self' blob: https://*.vercel.app https://dweb.link https://*.ipfs.dweb.link https://ipfs.io https://gateway.pinata.cloud",
-              "frame-src 'self' blob: https://*.vercel.app https://dweb.link https://*.ipfs.dweb.link https://ipfs.io https://gateway.pinata.cloud",
+              "child-src 'self' blob: data: https://*.vercel.app https://dweb.link https://*.ipfs.dweb.link https://ipfs.io https://gateway.pinata.cloud",
+              "frame-src 'self' blob: data: https://*.vercel.app https://dweb.link https://*.ipfs.dweb.link https://ipfs.io https://gateway.pinata.cloud",
               "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com https://gateway.pinata.cloud https://gateway.lighthouse.storage https://*.lighthouse.storage https://ipfs.io https://dweb.link",
               "media-src 'self' data: blob: https://*.public.blob.vercel-storage.com https://gateway.pinata.cloud https://gateway.lighthouse.storage https://*.lighthouse.storage https://ipfs.io https://dweb.link",
-              "connect-src 'self' blob: https://api.pinata.cloud https://gateway.pinata.cloud https://gateway.lighthouse.storage https://api.lighthouse.storage https://node.lighthouse.storage https://lighthouse.storage https://*.lighthouse.storage https://ipfs.io https://dweb.link https://sepolia.base.org http://127.0.0.1:8545 http://localhost:8545",
+              "connect-src 'self' blob: https://api.pinata.cloud https://gateway.pinata.cloud https://gateway.lighthouse.storage https://api.lighthouse.storage https://node.lighthouse.storage https://lighthouse.storage https://*.lighthouse.storage https://ipfs.io https://dweb.link https://mainnet.base.org https://sepolia.base.org http://127.0.0.1:8545 http://localhost:8545",
               "style-src 'self' 'unsafe-inline'",
               "font-src 'self' data:",
             ].join("; "),

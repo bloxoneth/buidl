@@ -2,12 +2,27 @@ import { NextResponse } from "next/server"
 import { ethers } from "ethers"
 import { redis } from "@/lib/redis"
 import { chainNamespace, rk } from "@/lib/redis-keys"
-import { CONTRACTS, BUILD_NFT_ABI, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { CONTRACTS, BUILD_NFT_ABI, RPC_URL } from "@/lib/contracts/buidl-contracts"
 import type { Build } from "@/lib/types"
+import { getMarketplaceStatus } from "@/lib/marketplace-sync"
+
+async function withMarketplaceStatuses(builds: Build[]): Promise<Build[]> {
+  return Promise.all(
+    builds.map(async (build) => {
+      if (!build.tokenId) return build
+      try {
+        const marketplace = await getMarketplaceStatus(String(build.tokenId), build)
+        return { ...build, marketplace }
+      } catch {
+        return build
+      }
+    })
+  )
+}
 
 // GET /api/builds/minted - Chain is truth, Redis is cache
 export async function GET(request: Request) {
-  const legacyPrefix = `ethblox:${process.env.NEXT_PUBLIC_CHAIN_ID ?? "84532"}:`
+  const legacyPrefix = `buidl:${process.env.NEXT_PUBLIC_CHAIN_ID ?? "84532"}:`
   const currentNs = chainNamespace()
   const useLegacyFallback = currentNs !== legacyPrefix
   const legacyKey = (key: string) => `${legacyPrefix}${key}`
@@ -124,7 +139,7 @@ export async function GET(request: Request) {
       if (!accepted) {
         builds.push({
           id: `chain_${tokenId}`,
-          name: `BASEBLOX #${tokenId}`,
+          name: `BUIDL #${tokenId}`,
           creator: chainOwner,
           bricks: [],
           tokenId: String(tokenId),
@@ -135,24 +150,33 @@ export async function GET(request: Request) {
     }
 
     builds.sort((a, b) => Number(b.tokenId) - Number(a.tokenId))
+    const buildsWithStatus = await withMarketplaceStatuses(builds)
     return NextResponse.json({
-      builds,
+      builds: buildsWithStatus,
       source: "cache",
       namespace: chainNamespace(),
       contract: CONTRACTS.BUILD_NFT,
-      missing: builds.length === 0 ? ["cache_index_missing"] : [],
+      missing: buildsWithStatus.length === 0 ? ["cache_index_missing"] : [],
     })
   }
 
   try {
     const url = new URL(request.url)
     const querySource = (url.searchParams.get("source") ?? "").toLowerCase()
-    const headerSource = (request.headers.get("x-ethblox-source") ?? "").toLowerCase()
+    const headerSource = (request.headers.get("x-buidl-source") ?? "").toLowerCase()
     const requestedSource = querySource || headerSource
 
     // Default to cache for speed. `truth` forces chain scan.
     if (requestedSource !== "truth") {
-      return loadFromRedisCache()
+      const cacheResponse = await loadFromRedisCache()
+      try {
+        const parsed = await cacheResponse.clone().json()
+        const cacheBuilds = Array.isArray(parsed?.builds) ? parsed.builds.length : 0
+        // If cache is too thin, fall through to chain truth to avoid empty/stale Explore pages.
+        if (cacheBuilds >= 5) return cacheResponse
+      } catch {
+        return cacheResponse
+      }
     }
 
     const provider = new ethers.JsonRpcProvider(RPC_URL)
@@ -243,7 +267,7 @@ export async function GET(request: Request) {
 
         builds.push({
           id: `chain_${tokenId}`,
-          name: `BASEBLOX #${tokenId}`,
+          name: `BUIDL #${tokenId}`,
           creator: owner.toLowerCase(),
           bricks: [],
           tokenId: String(tokenId),
@@ -255,12 +279,13 @@ export async function GET(request: Request) {
     }
 
     builds.sort((a, b) => Number(b.tokenId) - Number(a.tokenId))
+    const buildsWithStatus = await withMarketplaceStatuses(builds)
     return NextResponse.json({
-      builds,
+      builds: buildsWithStatus,
       source: "truth",
       namespace: chainNamespace(),
       contract: CONTRACTS.BUILD_NFT,
-      missing: builds.length === 0 ? ["chain_has_no_minted_tokens"] : [],
+      missing: buildsWithStatus.length === 0 ? ["chain_has_no_minted_tokens"] : [],
     })
   } catch (error) {
     console.error("Failed to fetch minted builds in truth mode:", error)

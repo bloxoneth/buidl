@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Download, ExternalLink } from "lucide-react"
-import { CONTRACTS } from "@/lib/contracts/ethblox-contracts"
+import { CONTRACTS } from "@/lib/contracts/buidl-contracts"
 import { BuildVoxelPreview } from "@/components/preview/BuildVoxelPreview"
 
 interface MintedBuild {
@@ -77,7 +77,7 @@ export default function GalleryClient() {
         const buildData = await response.json()
         // Store in localStorage for the builder to load
         if (typeof window !== "undefined") {
-          localStorage.setItem("ethblox_load_build_data", JSON.stringify(buildData))
+          localStorage.setItem("buidl_load_build_data", JSON.stringify(buildData))
           window.location.href = "/buildv2"
         }
       }
@@ -106,7 +106,7 @@ export default function GalleryClient() {
       <div className="container py-12">
         <div className="max-w-4xl mx-auto mb-12 text-center">
           <h1 className="text-4xl md:text-5xl font-bold mb-4">Gallery</h1>
-          <p className="text-lg text-muted-foreground mb-8">Explore minted Build NFTs from the BASEBLOX community</p>
+          <p className="text-lg text-muted-foreground mb-8">Explore minted Build NFTs from the BUIDL community</p>
 
           <Input
             type="search"
@@ -136,7 +136,7 @@ export default function GalleryClient() {
 
               return (
                 <Card key={build.tokenId} className="flex flex-col">
-                  <div className="h-44 border-b border-[hsl(var(--ethblox-border))] bg-[hsl(var(--ethblox-bg))]">
+                  <div className="h-44 border-b border-[hsl(var(--buidl-border))] bg-[hsl(var(--buidl-bg))]">
                     <BuildVoxelPreview
                       bricks={build.bricks}
                       geometryHash={build.geometryHash || build.buildHash}

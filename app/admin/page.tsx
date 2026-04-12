@@ -2,8 +2,8 @@ import { Suspense } from "react"
 import { AdminClient } from "@/components/admin/AdminClient"
 
 export const metadata = {
-  title: "Admin Dashboard | BASEBLOX",
-  description: "Admin tools for BASEBLOX",
+  title: "Admin Dashboard | BUIDL",
+  description: "Admin tools for BUIDL",
 }
 
 export default function AdminPage() {

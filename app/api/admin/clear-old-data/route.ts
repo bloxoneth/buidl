@@ -2,8 +2,8 @@ import { Redis } from "@upstash/redis"
 import { NextResponse } from "next/server"
 
 const redis = new Redis({
-  url: process.env.KV_REST_API_URL!,
-  token: process.env.KV_REST_API_TOKEN!,
+  url: (process.env.KV_REST_API_URL || "").trim(),
+  token: (process.env.KV_REST_API_TOKEN || "").trim(),
 })
 
 // One-time endpoint to clear old NFT data from previous contract

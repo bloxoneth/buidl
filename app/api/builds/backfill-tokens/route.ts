@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { ethers } from "ethers"
 import { redis } from "@/lib/redis"
 import { rk } from "@/lib/redis-keys"
-import { CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { CONTRACTS, RPC_URL } from "@/lib/contracts/buidl-contracts"
 
 const CONTRACT_ABI = [
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
@@ -80,7 +80,7 @@ async function backfill() {
         }
           await redis.set(rk(`build:${buildId}`), {
             id: buildId,
-            name: `BASEBLOX #${tokenId}`,
+            name: `BUIDL #${tokenId}`,
             creator: owner.toLowerCase(),
             bricks: [],
             tokenId,

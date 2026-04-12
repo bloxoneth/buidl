@@ -9,10 +9,12 @@ import {
   CHAIN_ID,
   BASE_METADATA_URI,
   BASE_METADATA_CID,
-} from "@/lib/contracts/ethblox-contracts"
+} from "@/lib/contracts/buidl-contracts"
 
 // Reads token data directly from chain + IPNS metadata
 // No Redis - purely decentralized sources for debugging
+export const dynamic = "force-dynamic"
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ tokenId: string }> }
@@ -40,16 +42,23 @@ export async function GET(
   onchain.exists = exists
 
   if (!exists) {
-    return NextResponse.json({
-      onchain,
-      ipfsMetadata: null,
-      ipfsURL: null,
-      contract: CONTRACTS.BUILD_NFT,
-      chain: `${process.env.NEXT_PUBLIC_NETWORK_NAME ?? "Base Sepolia"} (${CHAIN_ID})`,
-      baseMetadataURI: BASE_METADATA_URI,
-      notFound: true,
-      errors: errors.length > 0 ? errors : ["token does not exist"],
-    })
+    return NextResponse.json(
+      {
+        onchain,
+        ipfsMetadata: null,
+        ipfsURL: null,
+        contract: CONTRACTS.BUILD_NFT,
+        chain: `${process.env.NEXT_PUBLIC_NETWORK_NAME ?? "Base Sepolia"} (${CHAIN_ID})`,
+        baseMetadataURI: BASE_METADATA_URI,
+        notFound: true,
+        errors: errors.length > 0 ? errors : ["token does not exist"],
+      },
+      {
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
+      },
+    )
   }
 
   // Owner
@@ -101,12 +110,25 @@ export async function GET(
   const ipfsToGateway = (uri: string, gatewayBase: string) =>
     `${gatewayBase.replace(/\/+$/, "")}/${uri.replace(/^ipfs:\/\//, "")}`
 
-  // Fetch IPFS metadata from the actual on-chain tokenURI first.
+  // Fetch metadata from the actual on-chain tokenURI.
+  // Supports data:application/json;base64 (fully on-chain), ipfs://, and https:// URIs.
   let ipfsMetadata: Record<string, unknown> | null = null
   let resolvedURL: string | null = null
 
+  // Handle on-chain data URI (fully on-chain tokens)
+  if (tokenURI && tokenURI.startsWith("data:application/json;base64,")) {
+    try {
+      const b64 = tokenURI.replace("data:application/json;base64,", "")
+      const json = Buffer.from(b64, "base64").toString("utf-8")
+      ipfsMetadata = JSON.parse(json)
+      resolvedURL = "on-chain (data URI)"
+    } catch (e: any) {
+      errors.push(`data-uri decode: ${e.message}`)
+    }
+  }
+
   const fallbackGateways: string[] = []
-  if (tokenURI) {
+  if (!ipfsMetadata && tokenURI) {
     if (tokenURI.startsWith("ipfs://")) {
       fallbackGateways.push(ipfsToGateway(tokenURI, "https://gateway.pinata.cloud/ipfs"))
       fallbackGateways.push(ipfsToGateway(tokenURI, "https://gateway.lighthouse.storage/ipfs"))
@@ -116,17 +138,19 @@ export async function GET(
       fallbackGateways.push(tokenURI)
     }
   }
-  // Legacy fallback for old CIDs/env defaults.
-  fallbackGateways.push(`https://gateway.pinata.cloud/ipfs/${BASE_METADATA_CID}/${id}.json`)
-  fallbackGateways.push(`https://gateway.lighthouse.storage/ipfs/${BASE_METADATA_CID}/${id}.json`)
-  fallbackGateways.push(`https://dweb.link/ipfs/${BASE_METADATA_CID}/${id}.json`)
-  fallbackGateways.push(`https://ipfs.io/ipfs/${BASE_METADATA_CID}/${id}.json`)
+  // Legacy fallback for old CIDs/env defaults (only if no metadata yet).
+  if (!ipfsMetadata) {
+    fallbackGateways.push(`https://gateway.pinata.cloud/ipfs/${BASE_METADATA_CID}/${id}.json`)
+    fallbackGateways.push(`https://gateway.lighthouse.storage/ipfs/${BASE_METADATA_CID}/${id}.json`)
+    fallbackGateways.push(`https://dweb.link/ipfs/${BASE_METADATA_CID}/${id}.json`)
+    fallbackGateways.push(`https://ipfs.io/ipfs/${BASE_METADATA_CID}/${id}.json`)
+  }
 
   for (const url of fallbackGateways) {
     try {
       const res = await fetch(url, {
         signal: AbortSignal.timeout(10_000),
-        next: { revalidate: 60 },
+        cache: "no-store",
       })
       if (res.ok) {
         ipfsMetadata = await res.json()
@@ -169,13 +193,20 @@ export async function GET(
     errors.push("IPFS metadata: all gateways failed")
   }
 
-  return NextResponse.json({
-    onchain,
-    ipfsMetadata,
-    ipfsURL: resolvedURL,
-    contract: CONTRACTS.BUILD_NFT,
-    chain: `${process.env.NEXT_PUBLIC_NETWORK_NAME ?? "Base Sepolia"} (${CHAIN_ID})`,
-    baseMetadataURI: BASE_METADATA_URI,
-    errors: errors.length > 0 ? errors : undefined,
-  })
+  return NextResponse.json(
+    {
+      onchain,
+      ipfsMetadata,
+      ipfsURL: resolvedURL,
+      contract: CONTRACTS.BUILD_NFT,
+      chain: `${process.env.NEXT_PUBLIC_NETWORK_NAME ?? "Base Sepolia"} (${CHAIN_ID})`,
+      baseMetadataURI: BASE_METADATA_URI,
+      errors: errors.length > 0 ? errors : undefined,
+    },
+    {
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+      },
+    },
+  )
 }

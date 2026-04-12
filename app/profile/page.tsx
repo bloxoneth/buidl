@@ -3,8 +3,8 @@ import { SiteFooter } from "@/components/site-footer"
 import ProfileRedirect from "@/components/profile/ProfileRedirect"
 
 export const metadata = {
-  title: "Profile | BASEBLOX",
-  description: "View and manage your BASEBLOX builder profile",
+  title: "Profile | BUIDL",
+  description: "View and manage your BUIDL builder profile",
 }
 
 export default function ProfilePage() {

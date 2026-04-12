@@ -27,7 +27,7 @@ function BuildGeometry({ bricks }: { bricks: Brick[] }) {
 export function BuildPreview({ bricks }: BuildPreviewProps) {
   if (!bricks || bricks.length === 0) {
     return (
-      <div className="w-full h-full min-h-[8rem] bg-[hsl(var(--ethblox-surface-elevated))] rounded flex items-center justify-center text-[hsl(var(--ethblox-text-tertiary))] text-sm">
+      <div className="w-full h-full min-h-[8rem] bg-[hsl(var(--buidl-surface-elevated))] rounded flex items-center justify-center text-[hsl(var(--buidl-text-tertiary))] text-sm">
         No geometry
       </div>
     )
@@ -42,7 +42,7 @@ export function BuildPreview({ bricks }: BuildPreviewProps) {
   const cameraDistance = maxDim * 1.5
 
   return (
-    <div className="w-full h-full min-h-[8rem] bg-[hsl(var(--ethblox-surface-elevated))] rounded overflow-hidden">
+    <div className="w-full h-full min-h-[8rem] bg-[hsl(var(--buidl-surface-elevated))] rounded overflow-hidden">
       <Canvas camera={{ position: [cameraDistance, cameraDistance, cameraDistance], fov: 50 }}>
         <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={2} />
         <ambientLight intensity={0.6} />

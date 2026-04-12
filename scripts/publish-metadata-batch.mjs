@@ -142,7 +142,7 @@ function buildMetadata(build, tokenId, appBaseUrl, imagesCid) {
       ? String(build.name).trim()
       : kind === 0
         ? `Brick ${Math.min(w, d)}x${Math.max(w, d)} D${density}`
-        : `BASEBLOX ${kindLabel} #${tokenId}`;
+        : `BUIDL ${kindLabel} #${tokenId}`;
 
   const attributes = [
     jsonAttr("kind", kindLabel),
@@ -184,12 +184,12 @@ function buildMetadata(build, tokenId, appBaseUrl, imagesCid) {
       ? `${appBaseUrl}/api/builds/image/${tokenId}`
       : imagesCid
         ? `ipfs://${imagesCid}/${tokenId}.png`
-        : `https://ethblox-app-delta.vercel.app/api/builds/image/${tokenId}`;
+        : `https://buidl-app-delta.vercel.app/api/builds/image/${tokenId}`;
   const externalUrl = appBaseUrl ? `${appBaseUrl}/explore/${tokenId}` : undefined;
 
   return {
     name,
-    description: `BASEBLOX ${kindLabel} - ${w}x${d} density ${density}`,
+    description: `BUIDL ${kindLabel} - ${w}x${d} density ${density}`,
     image,
     ...(externalUrl ? { external_url: externalUrl } : {}),
     attributes,
@@ -202,7 +202,7 @@ function buildTokenHtml(tokenId) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BASEBLOX #${tokenId}</title>
+  <title>BUIDL #${tokenId}</title>
   <style>
     html, body { margin: 0; height: 100%; background: #0b183a; color: #dbeafe; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     #app { width: 100%; height: 100%; position: relative; overflow: hidden; }
@@ -216,7 +216,7 @@ function buildTokenHtml(tokenId) {
 <body>
   <div id="app">
     <div id="hud">
-      <div class="pill" id="name">BASEBLOX #${tokenId}</div>
+      <div class="pill" id="name">BUIDL #${tokenId}</div>
       <div class="pill" id="stats">Loading...</div>
     </div>
     <div id="msg">Loading metadata...</div>
@@ -237,7 +237,7 @@ function buildTokenHtml(tokenId) {
         console.error(e);
         return;
       }
-      nameEl.textContent = meta.name || "BASEBLOX #${tokenId}";
+      nameEl.textContent = meta.name || "BUIDL #${tokenId}";
       const attrs = {};
       for (const a of (meta.attributes || [])) {
         if (!a || typeof a !== "object") continue;
@@ -459,9 +459,9 @@ async function main() {
 
   const redis = new RestRedis({ url: kvUrl, token: kvToken });
   const keyStyleA = {
-    minted: `ethblox:${chainId}:minted_tokens`,
-    token: (id) => `ethblox:${chainId}:token:${id}`,
-    build: (id) => `ethblox:${chainId}:build:${id}`,
+    minted: `buidl:${chainId}:minted_tokens`,
+    token: (id) => `buidl:${chainId}:token:${id}`,
+    build: (id) => `buidl:${chainId}:build:${id}`,
   };
   const keyStyleB = {
     minted: `${redisPrefix}minted_tokens`,

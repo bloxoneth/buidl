@@ -24,14 +24,14 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: "BASEBLOX - On-Chain Creative Protocol",
+  title: "BUIDL - On-Chain Creative Protocol",
   description:
     "Programmable matter for Ethereum's next cultural era. 3D on-chain art, programmable matter, AI-native agents & a circular economy.",
   generator: "v0.app",
   icons: {
-    icon: [{ url: "/baseblox-logo.svg", type: "image/svg+xml" }],
-    shortcut: "/baseblox-logo.svg",
-    apple: "/baseblox-logo.svg",
+    icon: [{ url: "/buidl-logo.svg", type: "image/svg+xml" }],
+    shortcut: "/buidl-logo.svg",
+    apple: "/buidl-logo.svg",
   },
 }
 

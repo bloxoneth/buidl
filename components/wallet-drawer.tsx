@@ -11,7 +11,7 @@ import Link from "next/link"
 import { useBloxBalance } from "@/lib/web3/hooks/useBloxBalance"
 import { useBurnBuild } from "@/lib/web3/hooks/useBurnBuild"
 import { loadBuild } from "@/lib/storage"
-import { getUserMintedBuilds, BUILD_KIND, canBurn } from "@/lib/contracts/ethblox-contracts"
+import { getUserMintedBuilds, BUILD_KIND, canBurn } from "@/lib/contracts/buidl-contracts"
 import { ethers } from "ethers"
 import {
   Dialog,
@@ -192,21 +192,21 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-[570px] bg-[hsl(var(--ethblox-surface))] border-l border-[hsl(var(--ethblox-border))] overflow-y-auto"
+        className="w-full sm:max-w-[570px] bg-[hsl(var(--buidl-surface))] border-l border-[hsl(var(--buidl-border))] overflow-y-auto"
       >
-        <SheetHeader className="border-b border-[hsl(var(--ethblox-border))] pb-6 px-6 pt-6">
+        <SheetHeader className="border-b border-[hsl(var(--buidl-border))] pb-6 px-6 pt-6">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[hsl(var(--ethblox-yellow))] to-[hsl(var(--ethblox-accent-cyan))] flex items-center justify-center text-2xl font-bold text-black">
+            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[hsl(var(--buidl-yellow))] to-[hsl(var(--buidl-accent-cyan))] flex items-center justify-center text-2xl font-bold text-black">
               B
             </div>
             <div className="flex-1">
-              <SheetTitle className="text-xl font-heading text-[hsl(var(--ethblox-text-primary))] mb-1">
+              <SheetTitle className="text-xl font-heading text-[hsl(var(--buidl-text-primary))] mb-1">
                 Builder 420
               </SheetTitle>
-              <p className="text-sm text-[hsl(var(--ethblox-text-tertiary))] font-mono">{formatAddress(account)}</p>
+              <p className="text-sm text-[hsl(var(--buidl-text-tertiary))] font-mono">{formatAddress(account)}</p>
               <div className="flex items-center gap-2 mt-2">
-                <div className="w-2 h-2 rounded-full bg-[hsl(var(--ethblox-green))] animate-pulse" />
-                <span className="text-xs text-[hsl(var(--ethblox-text-secondary))] border border-[hsl(var(--ethblox-border))] px-2 py-0.5 rounded">
+                <div className="w-2 h-2 rounded-full bg-[hsl(var(--buidl-green))] animate-pulse" />
+                <span className="text-xs text-[hsl(var(--buidl-text-secondary))] border border-[hsl(var(--buidl-border))] px-2 py-0.5 rounded">
                   Connected
                 </span>
               </div>
@@ -245,40 +245,40 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-[hsl(var(--ethblox-surface-elevated))] border border-[hsl(var(--ethblox-border))] rounded-lg p-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-2">BLOX</p>
+            <div className="bg-[hsl(var(--buidl-surface-elevated))] border border-[hsl(var(--buidl-border))] rounded-lg p-4">
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-2">BLOX</p>
               {balanceLoading ? (
                 <div className="h-9 flex items-center">
-                  <div className="animate-pulse h-6 w-16 bg-[hsl(var(--ethblox-border))] rounded" />
+                  <div className="animate-pulse h-6 w-16 bg-[hsl(var(--buidl-border))] rounded" />
                 </div>
               ) : !isCorrectChain ? (
-                <p className="text-xl font-bold text-[hsl(var(--ethblox-text-tertiary))]">--</p>
+                <p className="text-xl font-bold text-[hsl(var(--buidl-text-tertiary))]">--</p>
               ) : (
-                <p className="text-3xl font-bold text-[hsl(var(--ethblox-text-primary))]">{balance || "0.00"}</p>
+                <p className="text-3xl font-bold text-[hsl(var(--buidl-text-primary))]">{balance || "0.00"}</p>
               )}
             </div>
-            <div className="bg-[hsl(var(--ethblox-surface-elevated))] border border-[hsl(var(--ethblox-border))] rounded-lg p-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-2">
+            <div className="bg-[hsl(var(--buidl-surface-elevated))] border border-[hsl(var(--buidl-border))] rounded-lg p-4">
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-2">
                 MINTED BUILDS
               </p>
-              <p className="text-3xl font-bold text-[hsl(var(--ethblox-text-primary))]">{mintedBuilds.length}</p>
+              <p className="text-3xl font-bold text-[hsl(var(--buidl-text-primary))]">{mintedBuilds.length}</p>
             </div>
-            <div className="bg-[hsl(var(--ethblox-surface-elevated))] border border-[hsl(var(--ethblox-border))] rounded-lg p-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-2">
+            <div className="bg-[hsl(var(--buidl-surface-elevated))] border border-[hsl(var(--buidl-border))] rounded-lg p-4">
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-2">
                 PENDING REWARDS
               </p>
-              <p className="text-3xl font-bold text-[hsl(var(--ethblox-text-primary))]">0.00</p>
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mt-1">Unclaimed</p>
+              <p className="text-3xl font-bold text-[hsl(var(--buidl-text-primary))]">0.00</p>
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">Unclaimed</p>
             </div>
-            <div className="bg-[hsl(var(--ethblox-surface-elevated))] border border-[hsl(var(--ethblox-border))] rounded-lg p-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-2">APR</p>
-              <p className="text-3xl font-bold text-[hsl(var(--ethblox-text-primary))]">0.00%</p>
+            <div className="bg-[hsl(var(--buidl-surface-elevated))] border border-[hsl(var(--buidl-border))] rounded-lg p-4">
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-2">APR</p>
+              <p className="text-3xl font-bold text-[hsl(var(--buidl-text-primary))]">0.00%</p>
             </div>
           </div>
 
           <Button
             asChild
-            className="w-full bg-[hsl(var(--ethblox-green))] hover:bg-[hsl(var(--ethblox-green))]/90 text-black font-semibold py-6 text-base"
+            className="w-full bg-[hsl(var(--buidl-green))] hover:bg-[hsl(var(--buidl-green))]/90 text-black font-semibold py-6 text-base"
           >
             <a
               href="https://app.uniswap.org"
@@ -290,18 +290,18 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
               <ExternalLink className="h-4 w-4" />
             </a>
           </Button>
-          <p className="text-xs text-center text-[hsl(var(--ethblox-text-tertiary))]">
+          <p className="text-xs text-center text-[hsl(var(--buidl-text-tertiary))]">
             Acquire BLOX to mint, sculpt, and power your Builds.
           </p>
 
           
 
           {isAdmin && (
-            <div className="border-t border-[hsl(var(--ethblox-border))] pt-4">
+            <div className="border-t border-[hsl(var(--buidl-border))] pt-4">
               <Button
                 asChild
                 variant="outline"
-                className="w-full bg-gradient-to-r from-[hsl(var(--ethblox-yellow))]/10 to-transparent border-[hsl(var(--ethblox-yellow))]/50 text-[hsl(var(--ethblox-yellow))] hover:border-[hsl(var(--ethblox-yellow))] hover:bg-[hsl(var(--ethblox-yellow))]/20"
+                className="w-full bg-gradient-to-r from-[hsl(var(--buidl-yellow))]/10 to-transparent border-[hsl(var(--buidl-yellow))]/50 text-[hsl(var(--buidl-yellow))] hover:border-[hsl(var(--buidl-yellow))] hover:bg-[hsl(var(--buidl-yellow))]/20"
               >
                 <Link href="/admin" className="flex items-center justify-center gap-2">
                   <Settings className="h-4 w-4" />
@@ -311,19 +311,19 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
             </div>
           )}
 
-          <div className="border-t border-[hsl(var(--ethblox-border))] pt-6">
+          <div className="border-t border-[hsl(var(--buidl-border))] pt-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-[hsl(var(--ethblox-text-primary))] uppercase tracking-wider">
+              <h3 className="text-sm font-semibold text-[hsl(var(--buidl-text-primary))] uppercase tracking-wider">
                 MY BUILDS ({mintedBuilds.length})
               </h3>
             </div>
 
             {mintedLoading ? (
               <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--ethblox-green))]" />
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--buidl-green))]" />
               </div>
             ) : mintedBuilds.length === 0 ? (
-              <div className="text-center py-8 text-[hsl(var(--ethblox-text-tertiary))] text-sm">
+              <div className="text-center py-8 text-[hsl(var(--buidl-text-tertiary))] text-sm">
                 No minted builds yet. Mint your first NFT!
               </div>
             ) : (
@@ -331,17 +331,17 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
                 {mintedBuilds.map((build) => (
                   <div
                     key={build.tokenId}
-                    className="w-full bg-gradient-to-r from-[hsl(var(--ethblox-green))]/10 to-transparent border border-[hsl(var(--ethblox-green))]/50 hover:border-[hsl(var(--ethblox-green))] rounded-lg p-4 transition-all group"
+                    className="w-full bg-gradient-to-r from-[hsl(var(--buidl-green))]/10 to-transparent border border-[hsl(var(--buidl-green))]/50 hover:border-[hsl(var(--buidl-green))] rounded-lg p-4 transition-all group"
                   >
                     <div className="flex items-center justify-between">
                       <button onClick={() => handleViewMintedBuild(build.tokenId)} className="flex-1 text-left">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono text-[hsl(var(--ethblox-green))]">NFT</span>
-                          <h4 className="font-semibold text-[hsl(var(--ethblox-text-primary))] group-hover:text-[hsl(var(--ethblox-green))] transition-colors">
+                          <span className="text-xs font-mono text-[hsl(var(--buidl-green))]">NFT</span>
+                          <h4 className="font-semibold text-[hsl(var(--buidl-text-primary))] group-hover:text-[hsl(var(--buidl-green))] transition-colors">
                             Build #{build.tokenId}
                           </h4>
                         </div>
-                        <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mt-1 font-mono">
+                        <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1 font-mono">
                           Token ID: {build.tokenId}
                         </p>
                       </button>
@@ -361,16 +361,16 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
             )}
           </div>
 
-          <div className="border-t border-[hsl(var(--ethblox-border))] pt-6">
+          <div className="border-t border-[hsl(var(--buidl-border))] pt-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-[hsl(var(--ethblox-text-primary))] uppercase tracking-wider">
+              <h3 className="text-sm font-semibold text-[hsl(var(--buidl-text-primary))] uppercase tracking-wider">
                 DRAFT BUILDS ({builds.length})
               </h3>
               <Button
                 asChild
                 variant="ghost"
                 size="sm"
-                className="text-[hsl(var(--ethblox-accent-cyan))] hover:text-[hsl(var(--ethblox-accent-cyan))]/80"
+                className="text-[hsl(var(--buidl-accent-cyan))] hover:text-[hsl(var(--buidl-accent-cyan))]/80"
               >
                 <Link href="/build">
                   <ExternalLink className="h-3.5 w-3.5 mr-1" />
@@ -381,10 +381,10 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
 
             {loading ? (
               <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--ethblox-green))]" />
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--buidl-green))]" />
               </div>
             ) : builds.length === 0 ? (
-              <div className="text-center py-8 text-[hsl(var(--ethblox-text-tertiary))] text-sm">
+              <div className="text-center py-8 text-[hsl(var(--buidl-text-tertiary))] text-sm">
                 No draft builds yet. Create your first build!
               </div>
             ) : (
@@ -393,18 +393,18 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
                   <button
                     key={build.id}
                     onClick={() => handleLoadBuild(build.id)}
-                    className="w-full bg-[hsl(var(--ethblox-surface-elevated))] border border-[hsl(var(--ethblox-border))] hover:border-[hsl(var(--ethblox-green))] rounded-lg p-4 text-left transition-all group"
+                    className="w-full bg-[hsl(var(--buidl-surface-elevated))] border border-[hsl(var(--buidl-border))] hover:border-[hsl(var(--buidl-green))] rounded-lg p-4 text-left transition-all group"
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <h4 className="font-semibold text-[hsl(var(--ethblox-text-primary))] group-hover:text-[hsl(var(--ethblox-green))] transition-colors">
+                        <h4 className="font-semibold text-[hsl(var(--buidl-text-primary))] group-hover:text-[hsl(var(--buidl-green))] transition-colors">
                           {build.name}
                         </h4>
-                        <p className="text-sm text-[hsl(var(--ethblox-text-tertiary))] mt-1">
+                        <p className="text-sm text-[hsl(var(--buidl-text-tertiary))] mt-1">
                           {build.blockCount} blocks
                         </p>
                       </div>
-                      <span className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">{build.createdAt}</span>
+                      <span className="text-xs text-[hsl(var(--buidl-text-tertiary))]">{build.createdAt}</span>
                     </div>
                   </button>
                 ))}
@@ -412,11 +412,11 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 pt-4 border-t border-[hsl(var(--ethblox-border))]">
+          <div className="grid grid-cols-2 gap-3 pt-4 border-t border-[hsl(var(--buidl-border))]">
             <Button
               onClick={switchAccount}
               variant="outline"
-              className="bg-transparent border-[hsl(var(--ethblox-border))] text-[hsl(var(--ethblox-text-secondary))] hover:border-[hsl(var(--ethblox-green))] hover:text-[hsl(var(--ethblox-green))]"
+              className="bg-transparent border-[hsl(var(--buidl-border))] text-[hsl(var(--buidl-text-secondary))] hover:border-[hsl(var(--buidl-green))] hover:text-[hsl(var(--buidl-green))]"
             >
               <RefreshCw className="h-4 w-4 mr-2" />
               Switch Account
@@ -424,7 +424,7 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
             <Button
               onClick={handleDisconnect}
               variant="outline"
-              className="bg-transparent border-[hsl(var(--ethblox-border))] text-[hsl(var(--ethblox-text-secondary))] hover:border-red-500 hover:text-red-500"
+              className="bg-transparent border-[hsl(var(--buidl-border))] text-[hsl(var(--buidl-text-secondary))] hover:border-red-500 hover:text-red-500"
             >
               <LogOut className="h-4 w-4 mr-2" />
               Disconnect
@@ -434,10 +434,10 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
       </SheetContent>
 
       <Dialog open={burnDialogOpen} onOpenChange={setBurnDialogOpen}>
-        <DialogContent className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+        <DialogContent className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
           <DialogHeader>
-            <DialogTitle className="text-[hsl(var(--ethblox-text-primary))]">Burn Build</DialogTitle>
-            <DialogDescription className="text-[hsl(var(--ethblox-text-secondary))]">
+            <DialogTitle className="text-[hsl(var(--buidl-text-primary))]">Burn Build</DialogTitle>
+            <DialogDescription className="text-[hsl(var(--buidl-text-secondary))]">
               This will permanently destroy this Build NFT. All locked BLOX will be returned to your wallet. This action
               cannot be undone.
             </DialogDescription>
@@ -447,7 +447,7 @@ export function WalletDrawer({ open, onOpenChange }: WalletDrawerProps) {
               variant="outline"
               onClick={() => setBurnDialogOpen(false)}
               disabled={burning}
-              className="border-[hsl(var(--ethblox-border))] text-[hsl(var(--ethblox-text-secondary))]"
+              className="border-[hsl(var(--buidl-border))] text-[hsl(var(--buidl-text-secondary))]"
             >
               Cancel
             </Button>

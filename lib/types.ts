@@ -1,9 +1,13 @@
+import type { ColourIndex } from './palette'
+
 export type Brick = {
-  color: string
+  color: string // hex string — keep for Three.js rendering
+  colourIndex: ColourIndex // 1-7 protocol colour index
   position: [number, number, number] // x, y, z
   width: number
   depth: number
   nftGroupId?: string // Groups bricks that belong to the same placed NFT
+  useMode?: 0 | 1 // 0=COMPONENT (recolour), 1=COLLECTIBLE (preserve)
 }
 
 export type Build = {
@@ -47,10 +51,42 @@ export type Build = {
   ipfsCid?: string
   ipfsUri?: string
   ipfsGatewayUrl?: string
+  ipfsImageUri?: string
+  ipfsImageGatewayUrl?: string
   ipfsSyncedAt?: string
   ipfsLastError?: string
   ipfsLastAttemptAt?: string
   onchainMinted?: boolean
+  marketplace?: MarketplaceLifecycle
+}
+
+export type MarketplaceLifecycleState =
+  | "minted_onchain"
+  | "ipfs_synced"
+  | "marketplace_pending"
+  | "marketplace_live"
+  | "failed_retrying"
+
+export type MarketplaceLifecycle = {
+  tokenId: string
+  state: MarketplaceLifecycleState
+  stateLabel: "Minted onchain" | "IPFS synced" | "Marketplace pending" | "Marketplace live" | "Failed (retrying)"
+  onchainMinted: boolean
+  ipfsSynced: boolean
+  marketplaceLive: boolean
+  retryCount: number
+  retryHalted?: boolean
+  nextRetryAt?: string
+  lastAttemptAt?: string
+  lastSuccessAt?: string
+  lastError?: string
+  baseUri?: string
+  cid?: string
+  tokenURI?: string
+  imageURI?: string
+  setBaseTxHash?: string
+  checkedGateways?: string[]
+  imageCheckedGateways?: string[]
 }
 
 export type BuildMetadata = {

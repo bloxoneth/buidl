@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { ethers } from "ethers"
 import { redis } from "@/lib/redis"
 import { rk, rpat } from "@/lib/redis-keys"
-import { CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { CONTRACTS, RPC_URL } from "@/lib/contracts/buidl-contracts"
 
 const REGISTRY_ABI = [
   "function licenseIdForBuild(uint256 buildId) view returns (uint256)",
@@ -55,18 +55,19 @@ export async function GET(
       const latestBlock = await provider.getBlock("latest")
       const latestBlockNumber = Number(latestBlock?.number ?? 0)
       const cutoffTs = Math.floor(Date.now() / 1000) - 24 * 60 * 60
-      const fromBlock = Math.max(0, latestBlockNumber - 60_000)
+      const fromBlock = Math.max(0, latestBlockNumber - 9_900)
 
       const logs = await licenseNft.queryFilter(
-        licenseNft.filters.TransferSingle(null, ethers.ZeroAddress, null, licenseId),
+        licenseNft.filters.TransferSingle(null, ethers.ZeroAddress, null),
         fromBlock,
         latestBlockNumber,
       )
 
       for (const log of logs) {
+        if (BigInt(log.args?.id ?? 0) !== licenseId) continue
         const blk = await provider.getBlock(log.blockNumber)
         if (!blk || blk.timestamp < cutoffTs) continue
-        mintedLast24h += BigInt(log.args.value ?? 0n)
+        mintedLast24h += BigInt(log.args?.value ?? 0n)
       }
     }
 

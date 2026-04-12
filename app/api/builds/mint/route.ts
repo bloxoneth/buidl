@@ -1,11 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { ethers } from "ethers"
 import { redis } from "@/lib/redis"
-import { validateBrickParams, computeSpecKey, VALID_DENSITIES } from "@/lib/brickSpec"
+import { validateBrickParams, computeSpecKey } from "@/lib/brickSpec"
 import { normalizeBrickKey } from "@/data/bricks"
 import { rk } from "@/lib/redis-keys"
 import type { Build } from "@/lib/types"
-import { CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { CONTRACTS, RPC_URL } from "@/lib/contracts/buidl-contracts"
 import { buildAnimationUrl } from "@/lib/animation-url"
 import { attemptMarketplacePublish, markMarketplacePending } from "@/lib/marketplace-sync"
 
@@ -40,10 +40,11 @@ const IPFS_UPLOAD_URLS =
 const IPFS_GATEWAY_BASE = env("PINATA_GATEWAY_BASE") || "https://gateway.pinata.cloud/ipfs"
 const IPFS_UPLOAD_TIMEOUT_MS = Number(env("IPFS_UPLOAD_TIMEOUT_MS") || "25000")
 const IPFS_UPLOAD_RETRIES = Number(env("IPFS_UPLOAD_RETRIES") || "4")
-const AUTO_IPFS_PUSH_ON_MINT = env("AUTO_IPFS_PUSH_ON_MINT") === "1"
+const IPFS_ENABLED = env("NEXT_PUBLIC_IPFS_ENABLED") === "1"
+const AUTO_IPFS_PUSH_ON_MINT = IPFS_ENABLED && env("AUTO_IPFS_PUSH_ON_MINT") === "1"
 const MINT_REQUIRES_IPFS_SYNC =
-  (env("MINT_REQUIRES_IPFS_SYNC") || "1") === "1" && AUTO_IPFS_PUSH_ON_MINT
-const AUTO_SET_BASE_TOKEN_URI_ON_MINT = env("AUTO_SET_BASE_TOKEN_URI_ON_MINT") === "1"
+  IPFS_ENABLED && (env("MINT_REQUIRES_IPFS_SYNC") || "1") === "1" && AUTO_IPFS_PUSH_ON_MINT
+const AUTO_SET_BASE_TOKEN_URI_ON_MINT = IPFS_ENABLED && env("AUTO_SET_BASE_TOKEN_URI_ON_MINT") === "1"
 const BASE_TOKEN_URI_TARGET = env("BASE_TOKEN_URI_TARGET") || env("NEXT_PUBLIC_BASE_METADATA_URI") || ""
 const BASE_TOKEN_URI_OWNER_KEY = env("BASE_TOKEN_URI_OWNER_KEY") || env("PRIVATE_KEY") || ""
 const ENABLE_ANIMATION_URL = env("ENABLE_ANIMATION_URL") === "1"
@@ -191,33 +192,10 @@ export async function POST(request: NextRequest) {
 
     // ── Kind 0 (Brick) validation ──
     if (kind === 0) {
-      // Trust on-chain truth for just-minted brick spec when available.
-      // Some deployments normalize/override density internally (e.g. fixed 27).
-      try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL)
-        const contract = new ethers.Contract(CONTRACTS.BUILD_NFT, CHAIN_READ_ABI, provider)
-        const tid = BigInt(String(tokenId))
-        const exists = Boolean(await contract.exists(tid))
-        if (exists) {
-          const onchainKind = Number(await contract.kindOf(tid))
-          if (onchainKind === 0) {
-            const [, , onchainDensity] = await contract.brickSpecOf(tid)
-            density = Number(onchainDensity)
-          }
-        }
-      } catch {
-        // Fallback to request payload density when on-chain read is unavailable.
-      }
+      // V3: density is always FIXED_DENSITY=1, no need to validate or read from chain
+      density = 1
 
-      // Density is REQUIRED for bricks - never default to 1
-      if (density === undefined || density === null) {
-        return NextResponse.json(
-          { error: "density is required for brick mints (kind=0). Must be one of: " + VALID_DENSITIES.join(", ") },
-          { status: 400 },
-        )
-      }
-
-      const validationError = validateBrickParams(brickW, brickD, density)
+      const validationError = validateBrickParams(brickW, brickD)
       if (validationError) {
         return NextResponse.json({ error: validationError }, { status: 400 })
       }
@@ -225,8 +203,8 @@ export async function POST(request: NextRequest) {
       // Duplicate check: has this spec already been minted?
       // Validate Redis index against on-chain state so stale cache data cannot block
       // a mint that already succeeded on-chain.
-      const specKey = computeSpecKey(brickW, brickD, density)
-      const brickKey = normalizeBrickKey(brickW, brickD, density)
+      const specKey = computeSpecKey(brickW, brickD)
+      const brickKey = normalizeBrickKey(brickW, brickD)
       const existingTokenId = await safeRedisGet<string>(rk(`brick:spec:${brickKey}`))
       if (existingTokenId && String(existingTokenId) !== String(tokenId)) {
         const provider = new ethers.JsonRpcProvider(RPC_URL)
@@ -484,7 +462,7 @@ export async function POST(request: NextRequest) {
         }
         try {
           if (!uploadedImageCid) {
-            const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://ethblox-app-delta.vercel.app").replace(/\/+$/, "")
+            const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://buidl-app-delta.vercel.app").replace(/\/+$/, "")
             const imageEndpoint = `${appBaseUrl}/api/builds/image/${tokenId}`
             const imageRes = await fetch(imageEndpoint, { redirect: "follow" })
             if (imageRes.ok) {
@@ -520,8 +498,8 @@ export async function POST(request: NextRequest) {
         }
 
         if (!uploadedImageCid) {
-          const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://ethblox-app-delta.vercel.app").replace(/\/+$/, "")
-          const fallbackPng = `${appBaseUrl}/baseblox-pass.png`
+          const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://buidl-app-delta.vercel.app").replace(/\/+$/, "")
+          const fallbackPng = `${appBaseUrl}/buidl-pass.png`
           const fallbackRes = await fetch(fallbackPng, { redirect: "follow" })
           if (!fallbackRes.ok) {
             throw new Error("Fallback PNG fetch failed")
@@ -750,7 +728,7 @@ function buildMetadataFromBuild(build: Build) {
   const d = build.brickDepth ?? build.baseDepth ?? 1
   const density = build.density ?? 1
   const mass = build.mass ?? (w * d * density)
-  const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://ethblox-app-delta.vercel.app").replace(/\/+$/, "")
+  const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://buidl-app-delta.vercel.app").replace(/\/+$/, "")
   const imageFromBuild = String((build as any).ipfsImageUri || "").trim()
   const imagesCid = readImagesCid()
   const normalizedName =
@@ -758,7 +736,7 @@ function buildMetadataFromBuild(build: Build) {
       ? String(build.name).trim()
       : kind === 0
         ? `Brick ${Math.min(w, d)}x${Math.max(w, d)} D${density}`
-        : `BASEBLOX ${kindLabel} #${tokenId}`
+        : `BUIDL ${kindLabel} #${tokenId}`
 
   const attributes: { trait_type: string; value: string | number }[] = [
     { trait_type: "kind", value: kindLabel },
@@ -790,7 +768,7 @@ function buildMetadataFromBuild(build: Build) {
 
   return {
     name: normalizedName,
-    description: `BASEBLOX ${kindLabel} - ${w}x${d} density ${density}`,
+    description: `BUIDL ${kindLabel} - ${w}x${d} density ${density}`,
     image: imageFromBuild || (imagesCid ? `ipfs://${imagesCid}/${tokenId}.png` : `${appBaseUrl}/api/builds/image/${tokenId}`),
     ...(ENABLE_ANIMATION_URL ? { animation_url: buildAnimationUrl(tokenId, appBaseUrl) } : {}),
     external_url: `${appBaseUrl}/explore/${tokenId}`,

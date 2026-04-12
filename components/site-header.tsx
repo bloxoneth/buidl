@@ -22,14 +22,14 @@ export function SiteHeader() {
           <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
             <div className="w-8 h-8 relative">
               <Image
-                src="/baseblox-logo.svg"
-                alt="BASEBLOX"
+                src="/buidl-logo.svg"
+                alt="BUIDL"
                 width={32}
                 height={32}
                 className="object-contain"
               />
             </div>
-            <span className="text-xl font-heading font-bold text-[hsl(var(--ethblox-yellow))]">BASEBLOX</span>
+            <span className="text-xl font-heading font-bold text-[hsl(var(--buidl-yellow))]">BUIDL</span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -38,10 +38,10 @@ export function SiteHeader() {
             <Link
               href="/buildv2"
               className={cn(
-                "text-sm font-medium transition-colors hover:text-[hsl(var(--ethblox-accent-cyan))]",
+                "text-sm font-medium transition-colors hover:text-[hsl(var(--buidl-accent-cyan))]",
                 isActive("/buildv2")
-                  ? "text-[hsl(var(--ethblox-accent-cyan))]"
-                  : "text-[hsl(var(--ethblox-text-secondary))]",
+                  ? "text-[hsl(var(--buidl-accent-cyan))]"
+                  : "text-[hsl(var(--buidl-text-secondary))]",
               )}
             >
               BUILD
@@ -49,21 +49,32 @@ export function SiteHeader() {
             <Link
               href="/explore"
               className={cn(
-                "text-sm font-medium transition-colors hover:text-[hsl(var(--ethblox-accent-cyan))]",
+                "text-sm font-medium transition-colors hover:text-[hsl(var(--buidl-accent-cyan))]",
                 isActive("/explore")
-                  ? "text-[hsl(var(--ethblox-accent-cyan))]"
-                  : "text-[hsl(var(--ethblox-text-secondary))]",
+                  ? "text-[hsl(var(--buidl-accent-cyan))]"
+                  : "text-[hsl(var(--buidl-text-secondary))]",
               )}
             >
               EXPLORE
             </Link>
             <Link
+              href="/passes"
+              className={cn(
+                "text-sm font-medium transition-colors hover:text-[hsl(var(--buidl-accent-cyan))]",
+                isActive("/passes")
+                  ? "text-[hsl(var(--buidl-accent-cyan))]"
+                  : "text-[hsl(var(--buidl-text-secondary))]",
+              )}
+            >
+              PASSES
+            </Link>
+            <Link
               href="/gallery"
               className={cn(
-                "text-sm font-medium transition-colors hover:text-[hsl(var(--ethblox-accent-cyan))]",
+                "text-sm font-medium transition-colors hover:text-[hsl(var(--buidl-accent-cyan))]",
                 isActive("/gallery")
-                  ? "text-[hsl(var(--ethblox-accent-cyan))]"
-                  : "text-[hsl(var(--ethblox-text-secondary))]",
+                  ? "text-[hsl(var(--buidl-accent-cyan))]"
+                  : "text-[hsl(var(--buidl-text-secondary))]",
               )}
             >
               GALLERY
@@ -71,10 +82,10 @@ export function SiteHeader() {
             <Link
               href="/profile"
               className={cn(
-                "text-sm font-medium transition-colors hover:text-[hsl(var(--ethblox-accent-cyan))]",
+                "text-sm font-medium transition-colors hover:text-[hsl(var(--buidl-accent-cyan))]",
                 pathname.startsWith("/profile") || pathname.startsWith("/u/")
-                  ? "text-[hsl(var(--ethblox-accent-cyan))]"
-                  : "text-[hsl(var(--ethblox-text-secondary))]",
+                  ? "text-[hsl(var(--buidl-accent-cyan))]"
+                  : "text-[hsl(var(--buidl-text-secondary))]",
               )}
             >
               PROFILE
@@ -94,9 +105,9 @@ export function SiteHeader() {
                 <span className="sr-only">Toggle menu</span>
               </Button>
             </SheetTrigger>
-            <SheetContent side="right" className="bg-[hsl(var(--ethblox-surface))] px-6">
+            <SheetContent side="right" className="bg-[hsl(var(--buidl-surface))] px-6">
               <SheetHeader className="pt-2">
-                <SheetTitle className="text-[hsl(var(--ethblox-yellow))]">Menu</SheetTitle>
+                <SheetTitle className="text-[hsl(var(--buidl-yellow))]">Menu</SheetTitle>
               </SheetHeader>
               <nav className="flex flex-col gap-4 mt-8">
                 {/* Old BUILDER hidden - keeping route active for backwards compatibility */}
@@ -105,8 +116,8 @@ export function SiteHeader() {
                   className={cn(
                     "text-base font-medium transition-colors",
                     isActive("/buildv2")
-                      ? "text-[hsl(var(--ethblox-accent-cyan))]"
-                      : "text-[hsl(var(--ethblox-text-secondary))] hover:text-[hsl(var(--ethblox-accent-cyan))]",
+                      ? "text-[hsl(var(--buidl-accent-cyan))]"
+                      : "text-[hsl(var(--buidl-text-secondary))] hover:text-[hsl(var(--buidl-accent-cyan))]",
                   )}
                 >
                   BUILD
@@ -116,19 +127,30 @@ export function SiteHeader() {
                   className={cn(
                     "text-base font-medium transition-colors",
                     isActive("/explore")
-                      ? "text-[hsl(var(--ethblox-accent-cyan))]"
-                      : "text-[hsl(var(--ethblox-text-secondary))] hover:text-[hsl(var(--ethblox-accent-cyan))]",
+                      ? "text-[hsl(var(--buidl-accent-cyan))]"
+                      : "text-[hsl(var(--buidl-text-secondary))] hover:text-[hsl(var(--buidl-accent-cyan))]",
                   )}
                 >
                   EXPLORE
+                </Link>
+                <Link
+                  href="/passes"
+                  className={cn(
+                    "text-base font-medium transition-colors",
+                    isActive("/passes")
+                      ? "text-[hsl(var(--buidl-accent-cyan))]"
+                      : "text-[hsl(var(--buidl-text-secondary))] hover:text-[hsl(var(--buidl-accent-cyan))]",
+                  )}
+                >
+                  PASSES
                 </Link>
                 <Link
                   href="/gallery"
                   className={cn(
                     "text-base font-medium transition-colors",
                     isActive("/gallery")
-                      ? "text-[hsl(var(--ethblox-accent-cyan))]"
-                      : "text-[hsl(var(--ethblox-text-secondary))] hover:text-[hsl(var(--ethblox-accent-cyan))]",
+                      ? "text-[hsl(var(--buidl-accent-cyan))]"
+                      : "text-[hsl(var(--buidl-text-secondary))] hover:text-[hsl(var(--buidl-accent-cyan))]",
                   )}
                 >
                   GALLERY
@@ -138,13 +160,13 @@ export function SiteHeader() {
                   className={cn(
                     "text-base font-medium transition-colors",
                     pathname.startsWith("/profile") || pathname.startsWith("/u/")
-                      ? "text-[hsl(var(--ethblox-accent-cyan))]"
-                      : "text-[hsl(var(--ethblox-text-secondary))] hover:text-[hsl(var(--ethblox-accent-cyan))]",
+                      ? "text-[hsl(var(--buidl-accent-cyan))]"
+                      : "text-[hsl(var(--buidl-text-secondary))] hover:text-[hsl(var(--buidl-accent-cyan))]",
                   )}
                 >
                   PROFILE
                 </Link>
-                <div className="pt-4 mt-4 border-t border-[hsl(var(--ethblox-border))]">
+                <div className="pt-4 mt-4 border-t border-[hsl(var(--buidl-border))]">
                   <WalletConnect variant="default" />
                 </div>
               </nav>

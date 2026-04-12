@@ -10,7 +10,7 @@ import {
   getPendingRewards,
   canBurn,
   type BuildState,
-} from "@/lib/contracts/ethblox-contracts"
+} from "@/lib/contracts/buidl-contracts"
 
 export interface UseBuildStateResult extends BuildState {
   pendingRewards: bigint

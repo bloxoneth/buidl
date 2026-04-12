@@ -3,10 +3,10 @@ import { ethers } from "ethers"
 import { redis } from "@/lib/redis"
 import { rk } from "@/lib/redis-keys"
 import type { Build } from "@/lib/types"
-import { BUILD_NFT_ABI, CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { BUILD_NFT_ABI, CONTRACTS, RPC_URL } from "@/lib/contracts/buidl-contracts"
 
 const ADMIN_TOKEN = process.env.ADMIN_RESET_TOKEN
-const OWNER_AUTH_PREFIX = "BASEBLOX_SYNC"
+const OWNER_AUTH_PREFIX = "BUIDL_SYNC"
 
 async function authorize(request: NextRequest, tokenId: string): Promise<string | null> {
   // Admin override
@@ -81,7 +81,7 @@ export async function POST(
     const synced: Build = {
       ...(existing || {
         id: buildId,
-        name: kind === 0 ? `Brick ${Math.min(Number(width), Number(depth))}x${Math.max(Number(width), Number(depth))} D${Number(density)}` : `BASEBLOX #${id}`,
+        name: kind === 0 ? `Brick ${Math.min(Number(width), Number(depth))}x${Math.max(Number(width), Number(depth))} D${Number(density)}` : `BUIDL #${id}`,
         creator: owner.toLowerCase(),
         bricks: [],
       }),

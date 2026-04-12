@@ -4,7 +4,7 @@ import { MintDebugClient } from "@/components/build/MintDebugClient"
 
 export default function MintDebugPage() {
   return (
-    <div className="min-h-screen bg-[hsl(var(--ethblox-bg))]">
+    <div className="min-h-screen bg-[hsl(var(--buidl-bg))]">
       <SiteHeader />
       <Suspense fallback={null}>
         <MintDebugClient />

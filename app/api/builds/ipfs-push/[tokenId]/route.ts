@@ -3,7 +3,7 @@ import { ethers } from "ethers"
 import { redis } from "@/lib/redis"
 import { rk } from "@/lib/redis-keys"
 import type { Build } from "@/lib/types"
-import { CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { CONTRACTS, RPC_URL } from "@/lib/contracts/buidl-contracts"
 import { buildAnimationUrl } from "@/lib/animation-url"
 
 const envRaw = (k: string) => (process.env[k] || "").trim()
@@ -22,21 +22,21 @@ const IPFS_UPLOAD_URL =
   env("IPFS_UPLOAD_URL") ||
   env("LIGHTHOUSE_UPLOAD_URL") ||
   (IPFS_PROVIDER === "lighthouse"
-    ? "https://node.lighthouse.storage/api/v0/add"
+    ? "https://upload.lighthouse.storage/api/v0/add"
     : "https://api.pinata.cloud/pinning/pinFileToIPFS")
 const LIGHTHOUSE_UPLOAD_URL_FALLBACKS = [
+  "https://upload.lighthouse.storage/api/v0/add",
   "https://node.lighthouse.storage/api/v0/add",
-  "https://api.lighthouse.storage/api/v0/add",
 ]
 const IPFS_UPLOAD_URLS =
   IPFS_PROVIDER === "lighthouse"
     ? Array.from(new Set([IPFS_UPLOAD_URL, ...LIGHTHOUSE_UPLOAD_URL_FALLBACKS]))
     : [IPFS_UPLOAD_URL]
-const IPFS_GATEWAY_BASE = env("PINATA_GATEWAY_BASE") || "https://gateway.pinata.cloud/ipfs"
+const IPFS_GATEWAY_BASE = env("IPFS_GATEWAY_BASE") || env("PINATA_GATEWAY_BASE") || (IPFS_PROVIDER === "lighthouse" ? "https://gateway.lighthouse.storage/ipfs" : "https://gateway.pinata.cloud/ipfs")
 const IPFS_UPLOAD_TIMEOUT_MS = Number(env("IPFS_UPLOAD_TIMEOUT_MS") || "25000")
 const IPFS_UPLOAD_RETRIES = Number(env("IPFS_UPLOAD_RETRIES") || "4")
 const ADMIN_TOKEN = env("ADMIN_RESET_TOKEN")
-const OWNER_AUTH_PREFIX = "BASEBLOX_IPFS_PUSH"
+const OWNER_AUTH_PREFIX = "BUIDL_IPFS_PUSH"
 const ENABLE_ANIMATION_URL = env("ENABLE_ANIMATION_URL") === "1"
 
 function isLikelyIpfsCid(v: string) {
@@ -167,56 +167,61 @@ export async function POST(
   }
 
   try {
-    // Upload token image first so metadata always points to a valid IPFS image URI.
+    // Upload token image (server-rendered SVG from on-chain geometry) to IPFS.
+    // Render SVG directly in-process (avoids HTTP self-fetch issues in dev).
     let imageCid = ""
-    let imagePath = `${tokenId}.png`
+    let imagePath = `${tokenId}.svg`
     try {
-      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://ethblox-app-delta.vercel.app").replace(/\/+$/, "")
-      const imageEndpoint = `${appBaseUrl}/api/builds/image/${tokenId}`
-      const imageRes = await fetch(imageEndpoint, { redirect: "follow" })
-      if (imageRes.ok) {
-        const bytes = await imageRes.arrayBuffer()
-        if (bytes.byteLength > 0) {
-          const contentType = (imageRes.headers.get("content-type") || "").toLowerCase()
-          const ext = contentType.includes("png")
-            ? "png"
-            : contentType.includes("jpeg") || contentType.includes("jpg")
-              ? "jpg"
-              : contentType.includes("webp")
-                ? "webp"
-                : "png"
-          const imageUploadRes = await uploadWithRetry(() => {
-            const formData = new FormData()
-            appendProviderUploadOptions(formData)
-            const blob = new Blob([bytes], { type: contentType || "image/png" })
-            imagePath = `${tokenId}.${ext}`
-            formData.append("file", blob, imagePath)
-            return formData
-          })
-          const imageUploadData = await imageUploadRes.json()
-          imageCid = imageUploadData.IpfsHash || imageUploadData.Hash || ""
-        }
+      const { renderVoxelSVG, decodeGeometryBytes } = await import("@/lib/svg-renderer")
+      const { ethers } = await import("ethers")
+      const provider = new ethers.JsonRpcProvider(RPC_URL)
+      const registry = new ethers.Contract(
+        CONTRACTS.GEOMETRY_REGISTRY,
+        ["function geometryData(uint256) view returns (bytes)"],
+        provider,
+      )
+      const geoBytes: string = await registry.geometryData(BigInt(tokenId))
+      const decoded = decodeGeometryBytes(geoBytes)
+      if (decoded && decoded.voxels.length > 0) {
+        const svg = renderVoxelSVG(decoded.voxels, { width: 512, height: 512 })
+        const svgBytes = new TextEncoder().encode(svg)
+        const imageUploadRes = await uploadWithRetry(() => {
+          const formData = new FormData()
+          appendProviderUploadOptions(formData)
+          const blob = new Blob([svgBytes], { type: "image/svg+xml" })
+          formData.append("file", blob, imagePath)
+          return formData
+        })
+        const imageUploadData = await imageUploadRes.json()
+        imageCid = imageUploadData.IpfsHash || imageUploadData.Hash || ""
       }
     } catch {
       // Fallback path below.
     }
 
     if (!imageCid) {
-      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://ethblox-app-delta.vercel.app").replace(/\/+$/, "")
-      const fallbackPng = `${appBaseUrl}/baseblox-pass.png`
-      const fallbackRes = await fetch(fallbackPng, { redirect: "follow" })
+      // Fallback: try the old image endpoint, then placeholder PNG
+      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || "https://buidl-app-delta.vercel.app").replace(/\/+$/, "")
+      const fallbackUrl = `${appBaseUrl}/api/builds/image/${tokenId}`
+      let fallbackRes = await fetch(fallbackUrl, { redirect: "follow" })
+      let fallbackType = "image/png"
       if (!fallbackRes.ok) {
-        return NextResponse.json({ error: "Fallback PNG fetch failed" }, { status: 502 })
+        fallbackRes = await fetch(`${appBaseUrl}/buidl-pass.png`, { redirect: "follow" })
+      }
+      if (!fallbackRes.ok) {
+        return NextResponse.json({ error: "Fallback image fetch failed" }, { status: 502 })
       }
       const bytes = await fallbackRes.arrayBuffer()
       if (bytes.byteLength === 0) {
-        return NextResponse.json({ error: "Fallback PNG is empty" }, { status: 502 })
+        return NextResponse.json({ error: "Fallback image is empty" }, { status: 502 })
       }
-      const imageName = `${tokenId}.png`
+      fallbackType = fallbackRes.headers.get("content-type") || "image/png"
+      const ext = fallbackType.includes("svg") ? "svg" : "png"
+      const imageName = `${tokenId}.${ext}`
       const imageUploadRes = await uploadWithRetry(() => {
         const formData = new FormData()
         appendProviderUploadOptions(formData)
-        const blob = new Blob([bytes], { type: "image/png" })
+        const blob = new Blob([bytes], { type: fallbackType })
         formData.append("file", blob, imageName)
         return formData
       })
@@ -231,7 +236,7 @@ export async function POST(
         { status: 502 }
       )
     }
-    metadata.image = `ipfs://${imageCid}/${imagePath}`
+    metadata.image = `ipfs://${imageCid}`
 
     // Upload metadata JSON via Pinata (or fallback-compatible endpoint)
     const metadataJson = JSON.stringify(metadata)
@@ -264,10 +269,10 @@ export async function POST(
           ...build,
           ipfsPending: false,
           ipfsCid: String(cid),
-          ipfsUri: `ipfs://${cid}/${fileName}`,
-          ipfsGatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}/${fileName}`,
-          ipfsImageUri: `ipfs://${imageCid}/${imagePath}`,
-          ipfsImageGatewayUrl: `${IPFS_GATEWAY_BASE}/${imageCid}/${imagePath}`,
+          ipfsUri: `ipfs://${cid}`,
+          ipfsGatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}`,
+          ipfsImageUri: `ipfs://${imageCid}`,
+          ipfsImageGatewayUrl: `${IPFS_GATEWAY_BASE}/${imageCid}`,
           ipfsSyncedAt: now,
           ipfsLastAttemptAt: now,
           ipfsLastError: undefined,
@@ -280,7 +285,7 @@ export async function POST(
       success: true,
       tokenId,
       cid,
-      gatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}/${fileName}`,
+      gatewayUrl: `${IPFS_GATEWAY_BASE}/${cid}`,
       metadata,
     })
   } catch (err: any) {
@@ -311,10 +316,44 @@ export async function POST(
 async function buildMetadataForToken(tokenId: string, request?: NextRequest) {
   // Fetch build data from Redis
   const buildId = await redis.get<string>(rk(`token:${tokenId}`))
-  if (!buildId) return null
+  const build = buildId ? await redis.get<Build>(rk(`build:${buildId}`)) : null
 
-  const build = await redis.get<Build>(rk(`build:${buildId}`))
-  if (!build) return null
+  // Fallback to on-chain data if Redis has nothing
+  if (!build) {
+    try {
+      const { ethers } = await import("ethers")
+      const provider = new ethers.JsonRpcProvider(RPC_URL)
+      const nft = new ethers.Contract(CONTRACTS.BUILD_NFT, [
+        "function exists(uint256) view returns (bool)",
+        "function kindOf(uint256) view returns (uint8)",
+        "function massOf(uint256) view returns (uint256)",
+        "function geometryOf(uint256) view returns (bytes32)",
+      ], provider)
+      const exists = await nft.exists(BigInt(tokenId))
+      if (!exists) return null
+      const [kind, mass, geoHash] = await Promise.all([
+        nft.kindOf(BigInt(tokenId)),
+        nft.massOf(BigInt(tokenId)),
+        nft.geometryOf(BigInt(tokenId)),
+      ])
+      const kindLabel = Number(kind) === 0 ? "Brick" : Number(kind) === 2 ? "Collectors Edition" : "Build"
+      const requestOrigin = (() => { try { return request ? new URL(request.url).origin : "" } catch { return "" } })()
+      const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || requestOrigin || "https://buidl-app-delta.vercel.app").replace(/\s+/g, "").replace(/\/+$/, "")
+      return {
+        name: `${kindLabel} #${tokenId}`,
+        description: `BUIDL on-chain voxel ${kindLabel}. Geometry stored fully on-chain via SSTORE2.`,
+        image: `${appBaseUrl}/api/builds/svg/${tokenId}`,
+        external_url: `${appBaseUrl}/explore/${tokenId}`,
+        attributes: [
+          { trait_type: "kind", value: kindLabel },
+          { trait_type: "mass", value: Number(mass) },
+          { trait_type: "geometryHash", value: String(geoHash) },
+        ],
+      }
+    } catch {
+      return null
+    }
+  }
 
   const kind = build.kind ?? 0
   const kindLabel = kind === 0 ? "Brick" : kind === 2 ? "Collectors Edition" : "Build"
@@ -333,7 +372,7 @@ async function buildMetadataForToken(tokenId: string, request?: NextRequest) {
     env("NEXT_PUBLIC_APP_URL") ||
     env("NEXT_PUBLIC_APP_ORIGIN") ||
     requestOrigin ||
-    "https://ethblox-app-delta.vercel.app"
+    "https://buidl-app-delta.vercel.app"
   )
     .replace(/\s+/g, "")
     .replace(/\/+$/, "")
@@ -344,7 +383,7 @@ async function buildMetadataForToken(tokenId: string, request?: NextRequest) {
       ? String(build.name).trim()
       : kind === 0
         ? `Brick ${Math.min(w, d)}x${Math.max(w, d)} D${density}`
-        : `BASEBLOX ${kindLabel} #${tokenId}`
+        : `BUIDL ${kindLabel} #${tokenId}`
 
   // Build attributes array
   const attributes: { trait_type: string; value: string | number }[] = [
@@ -384,7 +423,7 @@ async function buildMetadataForToken(tokenId: string, request?: NextRequest) {
 
   return {
     name: normalizedName,
-    description: `BASEBLOX ${kindLabel} - ${w}x${d} density ${density}`,
+    description: `BUIDL ${kindLabel} - ${w}x${d} density ${density}`,
     image: imageFromBuild || (imagesCid ? `ipfs://${imagesCid}/${tokenId}.png` : `${appBaseUrl}/api/builds/image/${tokenId}`),
     ...(ENABLE_ANIMATION_URL ? { animation_url: buildAnimationUrl(tokenId, appBaseUrl) } : {}),
     external_url: `${appBaseUrl}/explore/${tokenId}`,

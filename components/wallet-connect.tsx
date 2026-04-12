@@ -36,19 +36,19 @@ export function WalletConnect({ variant = "default" }: WalletConnectProps) {
           size="sm"
           className={
             isConnected
-              ? "bg-[hsl(var(--ethblox-surface))] text-[hsl(var(--ethblox-text-primary))] border border-[hsl(var(--ethblox-border))] hover:bg-[hsl(var(--ethblox-surface-elevated))] hover:border-[hsl(var(--ethblox-green))] transition-all"
-              : "bg-[hsl(var(--ethblox-green))] text-black hover:bg-[hsl(var(--ethblox-green))]/90 font-semibold"
+              ? "bg-[hsl(var(--buidl-surface))] text-[hsl(var(--buidl-text-primary))] border border-[hsl(var(--buidl-border))] hover:bg-[hsl(var(--buidl-surface-elevated))] hover:border-[hsl(var(--buidl-green))] transition-all"
+              : "bg-[hsl(var(--buidl-green))] text-black hover:bg-[hsl(var(--buidl-green))]/90 font-semibold"
           }
         >
           {isConnected ? (
             <>
-              <div className="w-2 h-2 rounded-full bg-[hsl(var(--ethblox-green))] mr-2" />
+              <div className="w-2 h-2 rounded-full bg-[hsl(var(--buidl-green))] mr-2" />
               {account && (
                 <span className="flex items-center gap-2">
                   {isCorrectChain && balance && (
-                    <span className="text-[hsl(var(--ethblox-green))] font-semibold">{balance} BLOX</span>
+                    <span className="text-[hsl(var(--buidl-green))] font-semibold">{balance} BLOX</span>
                   )}
-                  <span className="text-[hsl(var(--ethblox-text-tertiary))]">|</span>
+                  <span className="text-[hsl(var(--buidl-text-tertiary))]">|</span>
                   {formatAddress(account)}
                 </span>
               )}
@@ -71,13 +71,13 @@ export function WalletConnect({ variant = "default" }: WalletConnectProps) {
         onClick={handleClick}
         className={
           isConnected
-            ? "w-full bg-[hsl(var(--ethblox-surface))] text-[hsl(var(--ethblox-text-primary))] border border-[hsl(var(--ethblox-border))] hover:bg-[hsl(var(--ethblox-surface-elevated))] hover:border-[hsl(var(--ethblox-green))] transition-all"
-            : "w-full bg-[hsl(var(--ethblox-green))] text-black hover:bg-[hsl(var(--ethblox-green))]/90 font-semibold"
+            ? "w-full bg-[hsl(var(--buidl-surface))] text-[hsl(var(--buidl-text-primary))] border border-[hsl(var(--buidl-border))] hover:bg-[hsl(var(--buidl-surface-elevated))] hover:border-[hsl(var(--buidl-green))] transition-all"
+            : "w-full bg-[hsl(var(--buidl-green))] text-black hover:bg-[hsl(var(--buidl-green))]/90 font-semibold"
         }
       >
         {isConnected ? (
           <>
-            <div className="w-2 h-2 rounded-full bg-[hsl(var(--ethblox-green))] mr-2" />
+            <div className="w-2 h-2 rounded-full bg-[hsl(var(--buidl-green))] mr-2" />
             {account && formatAddress(account)}
           </>
         ) : (

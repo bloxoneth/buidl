@@ -29,7 +29,7 @@ import {
   getOwnedLicenses,
   getPendingLicenseRewards,
   claimLicenseRewards,
-} from "@/lib/contracts/ethblox-contracts"
+} from "@/lib/contracts/buidl-contracts"
 import { calculateTotalBlox } from "@/lib/brick-utils"
 import type { Brick } from "@/lib/types"
 import { BuildVoxelPreview } from "@/components/preview/BuildVoxelPreview"
@@ -329,7 +329,7 @@ export default function ProfileClient({ address }: ProfileClientProps) {
       if (response.ok) {
         const buildData = await response.json()
         if (typeof window !== "undefined") {
-          localStorage.setItem("ethblox_load_build_data", JSON.stringify(buildData))
+          localStorage.setItem("buidl_load_build_data", JSON.stringify(buildData))
           window.location.href = "/build"
         }
       }
@@ -486,22 +486,22 @@ export default function ProfileClient({ address }: ProfileClientProps) {
           <CardContent className="pt-6">
             <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
               {/* Avatar - IPFS Image PFP */}
-              <div className="w-24 h-24 rounded-xl bg-[hsl(var(--ethblox-surface-elevated))] overflow-hidden shrink-0 border border-[hsl(var(--ethblox-border))]">
+              <div className="w-24 h-24 rounded-xl bg-[hsl(var(--buidl-surface-elevated))] overflow-hidden shrink-0 border border-[hsl(var(--buidl-border))]">
                 {profile?.pfpTokenId ? (
                   pfpImageFailed ? (
-                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[hsl(var(--ethblox-yellow))] to-[hsl(var(--ethblox-accent-cyan))]">
+                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[hsl(var(--buidl-yellow))] to-[hsl(var(--buidl-accent-cyan))]">
                       <User className="h-10 w-10 text-black" />
                     </div>
                   ) : (
                     <img
                       src={tokenImageGatewayURL(profile.pfpTokenId)}
                       alt={`PFP #${profile.pfpTokenId}`}
-                      className="w-full h-full object-contain bg-[hsl(var(--ethblox-bg))]"
+                      className="w-full h-full object-contain bg-[hsl(var(--buidl-bg))]"
                       onError={() => setPfpImageFailed(true)}
                     />
                   )
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[hsl(var(--ethblox-yellow))] to-[hsl(var(--ethblox-accent-cyan))]">
+                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[hsl(var(--buidl-yellow))] to-[hsl(var(--buidl-accent-cyan))]">
                     <User className="h-10 w-10 text-black" />
                   </div>
                 )}
@@ -509,14 +509,14 @@ export default function ProfileClient({ address }: ProfileClientProps) {
 
               {/* Info */}
               <div className="flex-1">
-                <h1 className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))] mb-1">
+                <h1 className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))] mb-1">
                   {displayName}
                 </h1>
                 {profile?.bio && (
-                  <p className="text-[hsl(var(--ethblox-text-secondary))] mb-3">{profile.bio}</p>
+                  <p className="text-[hsl(var(--buidl-text-secondary))] mb-3">{profile.bio}</p>
                 )}
                 <div className="flex items-center gap-2">
-                  <code className="text-sm text-[hsl(var(--ethblox-text-tertiary))] font-mono bg-[hsl(var(--ethblox-surface-elevated))] px-2 py-1 rounded">
+                  <code className="text-sm text-[hsl(var(--buidl-text-tertiary))] font-mono bg-[hsl(var(--buidl-surface-elevated))] px-2 py-1 rounded">
                     {truncateAddress(address)}
                   </code>
                   <Button
@@ -551,48 +551,48 @@ export default function ProfileClient({ address }: ProfileClientProps) {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
           <Card>
             <CardContent className="pt-4 pb-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-1">BLOX</p>
-              <p className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))]">
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-1">BLOX</p>
+              <p className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))]">
                 {isCorrectChain ? (profileChainBalance || "0.00") : "--"}
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-1">Locked</p>
-              <p className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))]">
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-1">Locked</p>
+              <p className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))]">
                 {lockedBlox.toFixed(2)}
               </p>
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">in builds</p>
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))]">in builds</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-1">Locked</p>
-              <p className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))]">--</p>
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">Coming soon</p>
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-1">Locked</p>
+              <p className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))]">--</p>
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))]">Coming soon</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-1">Unclaimed ETH</p>
-              <p className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))]">
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-1">Unclaimed ETH</p>
+              <p className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))]">
                 {Number(ethers.formatEther(totalPendingRewardsWei)).toFixed(5)}
               </p>
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">from Distributor</p>
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))]">from Distributor</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-1">Builds</p>
-              <p className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))]">{mintedBuilds.length}</p>
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-1">Builds</p>
+              <p className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))]">{mintedBuilds.length}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] uppercase tracking-wider mb-1">Licenses</p>
-              <p className="text-2xl font-bold text-[hsl(var(--ethblox-text-primary))]">{licenseHoldings.length}</p>
-              <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">owned ids</p>
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] uppercase tracking-wider mb-1">Licenses</p>
+              <p className="text-2xl font-bold text-[hsl(var(--buidl-text-primary))]">{licenseHoldings.length}</p>
+              <p className="text-xs text-[hsl(var(--buidl-text-tertiary))]">owned ids</p>
             </CardContent>
           </Card>
         </div>
@@ -606,13 +606,13 @@ export default function ProfileClient({ address }: ProfileClientProps) {
           </CardHeader>
           <CardContent>
             {buildsLoading || rewardsLoading || licensesLoading ? (
-              <div className="text-sm text-[hsl(var(--ethblox-text-tertiary))]">Loading rewards…</div>
+              <div className="text-sm text-[hsl(var(--buidl-text-tertiary))]">Loading rewards…</div>
             ) : (
               <div className="space-y-4">
-                <div className="rounded-lg border border-[hsl(var(--ethblox-border))] px-3 py-3">
-                  <div className="text-sm text-[hsl(var(--ethblox-text-secondary))] mb-2">Build-owner rewards</div>
+                <div className="rounded-lg border border-[hsl(var(--buidl-border))] px-3 py-3">
+                  <div className="text-sm text-[hsl(var(--buidl-text-secondary))] mb-2">Build-owner rewards</div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-mono text-[hsl(var(--ethblox-text-primary))]">
+                    <span className="text-sm font-mono text-[hsl(var(--buidl-text-primary))]">
                       {Number(ethers.formatEther(pendingEthOwed)).toFixed(6)} ETH
                     </span>
                     <Button
@@ -626,10 +626,10 @@ export default function ProfileClient({ address }: ProfileClientProps) {
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-[hsl(var(--ethblox-border))] px-3 py-3">
-                  <div className="text-sm text-[hsl(var(--ethblox-text-secondary))] mb-2">License-holder rewards</div>
+                <div className="rounded-lg border border-[hsl(var(--buidl-border))] px-3 py-3">
+                  <div className="text-sm text-[hsl(var(--buidl-text-secondary))] mb-2">License-holder rewards</div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-mono text-[hsl(var(--ethblox-text-primary))]">
+                    <span className="text-sm font-mono text-[hsl(var(--buidl-text-primary))]">
                       {Number(ethers.formatEther(totalLicensePendingWei)).toFixed(6)} ETH
                     </span>
                     <Button
@@ -661,7 +661,7 @@ export default function ProfileClient({ address }: ProfileClientProps) {
 
               <TabsContent value="pinned">
                 {pinnedBuilds.length === 0 ? (
-                  <div className="text-center py-8 text-[hsl(var(--ethblox-text-tertiary))]">
+                  <div className="text-center py-8 text-[hsl(var(--buidl-text-tertiary))]">
                     {isOwnProfile ? "Pin builds to showcase them on your profile" : "No pinned builds yet"}
                   </div>
                 ) : (
@@ -683,14 +683,14 @@ export default function ProfileClient({ address }: ProfileClientProps) {
               <TabsContent value="owned">
                 {buildsLoading ? (
                   <div className="flex items-center justify-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--ethblox-green))]" />
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--buidl-green))]" />
                   </div>
                 ) : mintedBuilds.length === 0 ? (
-                  <div className="text-center py-8 text-[hsl(var(--ethblox-text-tertiary))]">
+                  <div className="text-center py-8 text-[hsl(var(--buidl-text-tertiary))]">
                     {isOwnProfile ? (
                       <>
                         No minted builds yet.{" "}
-                        <Link href="/build" className="text-[hsl(var(--ethblox-accent-cyan))] hover:underline">
+                        <Link href="/build" className="text-[hsl(var(--buidl-accent-cyan))] hover:underline">
                           Create your first build
                         </Link>
                       </>
@@ -725,20 +725,20 @@ export default function ProfileClient({ address }: ProfileClientProps) {
           </CardHeader>
           <CardContent>
             {licensesLoading ? (
-              <div className="text-sm text-[hsl(var(--ethblox-text-tertiary))]">Loading licenses…</div>
+              <div className="text-sm text-[hsl(var(--buidl-text-tertiary))]">Loading licenses…</div>
             ) : licenseHoldings.length === 0 ? (
-              <div className="text-sm text-[hsl(var(--ethblox-text-tertiary))]">No license balances found.</div>
+              <div className="text-sm text-[hsl(var(--buidl-text-tertiary))]">No license balances found.</div>
             ) : (
               <div className="space-y-2">
                 {licenseHoldings.map((row) => (
                   <div
                     key={`license-${row.licenseId}-${row.buildId}`}
-                    className="flex items-center justify-between rounded-lg border border-[hsl(var(--ethblox-border))] px-3 py-2"
+                    className="flex items-center justify-between rounded-lg border border-[hsl(var(--buidl-border))] px-3 py-2"
                   >
-                    <div className="text-sm text-[hsl(var(--ethblox-text-secondary))]">
+                    <div className="text-sm text-[hsl(var(--buidl-text-secondary))]">
                       Build #{row.buildId} · License #{row.licenseId}
                     </div>
-                    <div className="text-sm font-mono text-[hsl(var(--ethblox-text-primary))]">
+                    <div className="text-sm font-mono text-[hsl(var(--buidl-text-primary))]">
                       {row.balance} · {Number(ethers.formatEther(row.pendingWei)).toFixed(6)} ETH
                     </div>
                   </div>
@@ -754,7 +754,7 @@ export default function ProfileClient({ address }: ProfileClientProps) {
             <CardTitle>Recent Activity</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-center py-8 text-[hsl(var(--ethblox-text-tertiary))]">
+            <div className="text-center py-8 text-[hsl(var(--buidl-text-tertiary))]">
               Coming soon
             </div>
           </CardContent>
@@ -762,17 +762,17 @@ export default function ProfileClient({ address }: ProfileClientProps) {
 
         {/* Edit Profile Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent className="bg-[hsl(var(--ethblox-surface))] border-[hsl(var(--ethblox-border))]">
+          <DialogContent className="bg-[hsl(var(--buidl-surface))] border-[hsl(var(--buidl-border))]">
             <DialogHeader>
-              <DialogTitle className="text-[hsl(var(--ethblox-text-primary))]">Edit Profile</DialogTitle>
-              <DialogDescription className="text-[hsl(var(--ethblox-text-secondary))]">
+              <DialogTitle className="text-[hsl(var(--buidl-text-primary))]">Edit Profile</DialogTitle>
+              <DialogDescription className="text-[hsl(var(--buidl-text-secondary))]">
                 Update your public profile information
               </DialogDescription>
             </DialogHeader>
             
             <div className="space-y-4 py-4">
               <div>
-                <label className="text-sm font-medium text-[hsl(var(--ethblox-text-secondary))] mb-1.5 block">
+                <label className="text-sm font-medium text-[hsl(var(--buidl-text-secondary))] mb-1.5 block">
                   Display Name (max 32 chars)
                 </label>
                 <Input
@@ -783,7 +783,7 @@ export default function ProfileClient({ address }: ProfileClientProps) {
               </div>
               
               <div>
-                <label className="text-sm font-medium text-[hsl(var(--ethblox-text-secondary))] mb-1.5 block">
+                <label className="text-sm font-medium text-[hsl(var(--buidl-text-secondary))] mb-1.5 block">
                   Bio (max 160 chars)
                 </label>
                 <Textarea
@@ -792,13 +792,13 @@ export default function ProfileClient({ address }: ProfileClientProps) {
                   placeholder="Tell others about yourself"
                   rows={3}
                 />
-                <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mt-1">
+                <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">
                   {editBio.length}/160
                 </p>
               </div>
               
               <div>
-                <label className="text-sm font-medium text-[hsl(var(--ethblox-text-secondary))] mb-1.5 block">
+                <label className="text-sm font-medium text-[hsl(var(--buidl-text-secondary))] mb-1.5 block">
                   PFP Token ID
                 </label>
                 <Input
@@ -807,13 +807,13 @@ export default function ProfileClient({ address }: ProfileClientProps) {
                   onChange={(e) => setEditPfpTokenId(e.target.value)}
                   placeholder="Enter a Build NFT token ID you own"
                 />
-                <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mt-1">
+                <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">
                   Set this to a BuildNFT tokenId you own
                 </p>
               </div>
               
               <div>
-                <label className="text-sm font-medium text-[hsl(var(--ethblox-text-secondary))] mb-1.5 block">
+                <label className="text-sm font-medium text-[hsl(var(--buidl-text-secondary))] mb-1.5 block">
                   Pinned Build IDs
                 </label>
                 <Input
@@ -821,7 +821,7 @@ export default function ProfileClient({ address }: ProfileClientProps) {
                   onChange={(e) => setEditPinnedTokenIds(e.target.value)}
                   placeholder="e.g. 12, 45, 78"
                 />
-                <p className="text-xs text-[hsl(var(--ethblox-text-tertiary))] mt-1">
+                <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">
                   Comma-separated list of token IDs to pin (max 10)
                 </p>
               </div>
@@ -838,7 +838,7 @@ export default function ProfileClient({ address }: ProfileClientProps) {
               <Button
                 onClick={handleSaveProfile}
                 disabled={saving}
-                className="bg-[hsl(var(--ethblox-green))] text-black hover:bg-[hsl(var(--ethblox-green))]/90"
+                className="bg-[hsl(var(--buidl-green))] text-black hover:bg-[hsl(var(--buidl-green))]/90"
               >
                 {saving ? "Saving..." : "Save Changes"}
               </Button>
@@ -873,10 +873,10 @@ function BuildCard({
   const isBrick = build.kind === 0 || build.kind === undefined
 
   return (
-    <Card className={`flex flex-col overflow-hidden ${isPfp ? 'ring-2 ring-[hsl(var(--ethblox-accent-cyan))]' : ''}`}>
+    <Card className={`flex flex-col overflow-hidden ${isPfp ? 'ring-2 ring-[hsl(var(--buidl-accent-cyan))]' : ''}`}>
       {/* IPFS Image */}
       <Link href={`/explore/${build.tokenId}`} className="block">
-        <div className="w-full aspect-square bg-[hsl(var(--ethblox-bg))] relative overflow-hidden">
+        <div className="w-full aspect-square bg-[hsl(var(--buidl-bg))] relative overflow-hidden">
           <BuildVoxelPreview
             bricks={build.bricks}
             geometryHash={build.geometryHash || build.buildHash}
@@ -890,7 +890,7 @@ function BuildCard({
             #{build.tokenId}
           </span>
           {isPfp && (
-            <Badge className="absolute top-2 left-2 bg-[hsl(var(--ethblox-accent-cyan))] text-black">
+            <Badge className="absolute top-2 left-2 bg-[hsl(var(--buidl-accent-cyan))] text-black">
               PFP
             </Badge>
           )}
@@ -901,7 +901,7 @@ function BuildCard({
         <CardTitle className="line-clamp-1 text-base">{name}</CardTitle>
         <CardDescription>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-1.5 py-0.5 rounded bg-[hsl(var(--ethblox-bg))] text-[hsl(var(--ethblox-text-secondary))] text-xs">
+            <span className="px-1.5 py-0.5 rounded bg-[hsl(var(--buidl-bg))] text-[hsl(var(--buidl-text-secondary))] text-xs">
               {kindLabel}
             </span>
             {sizeLabel && (

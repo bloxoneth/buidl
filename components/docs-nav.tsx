@@ -21,7 +21,7 @@ export function DocsNav() {
 
   return (
     <nav className="space-y-2 sticky top-24 self-start">
-      <h3 className="text-sm font-heading font-semibold text-[hsl(var(--ethblox-text-primary))] mb-4">Documentation</h3>
+      <h3 className="text-sm font-heading font-semibold text-[hsl(var(--buidl-text-primary))] mb-4">Documentation</h3>
       {docsLinks.map((link) => {
         const isActive = pathname === `/docs/${link.slug}`
         return (
@@ -31,8 +31,8 @@ export function DocsNav() {
             className={cn(
               "block px-3 py-2 text-sm rounded transition-colors",
               isActive
-                ? "bg-[hsl(var(--ethblox-surface-elevated))] text-[hsl(var(--ethblox-accent-cyan))]"
-                : "text-[hsl(var(--ethblox-text-secondary))] hover:bg-[hsl(var(--ethblox-surface))] hover:text-[hsl(var(--ethblox-text-primary))]",
+                ? "bg-[hsl(var(--buidl-surface-elevated))] text-[hsl(var(--buidl-accent-cyan))]"
+                : "text-[hsl(var(--buidl-text-secondary))] hover:bg-[hsl(var(--buidl-surface))] hover:text-[hsl(var(--buidl-text-primary))]",
             )}
           >
             {link.label}

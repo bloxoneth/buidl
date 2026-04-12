@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { ethers } from "ethers"
-import { BUILD_NFT_ABI, CONTRACTS, LICENSE_REGISTRY_ABI, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { BUILD_NFT_ABI, CONTRACTS, LICENSE_REGISTRY_ABI, RPC_URL } from "@/lib/contracts/buidl-contracts"
 
 const LICENSE_NFT_ABI = [
   "function totalSupply(uint256 id) view returns (uint256)",
@@ -55,7 +55,7 @@ export async function GET(
       registry.pricingForLicense(licenseId),
     ])
 
-    let buildName = `BASEBLOX Build #${buildId.toString()}`
+    let buildName = `BUIDL Build #${buildId.toString()}`
     let buildImage: string | null = null
     let buildAnimation: string | null = null
     let geometryHash = "0x"
@@ -85,11 +85,11 @@ export async function GET(
     }
 
     const remaining = max > minted ? max - minted : 0n
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://ethblox-app.vercel.app"
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://buidl-app.vercel.app"
 
     return NextResponse.json({
       name: `License for ${buildName}`,
-      description: `ERC-1155 license for using BASEBLOX Build #${buildId.toString()} as a component.`,
+      description: `ERC-1155 license for using BUIDL Build #${buildId.toString()} as a component.`,
       image: buildImage,
       animation_url: buildAnimation,
       external_url: `${baseUrl}/explore/${buildId.toString()}`,

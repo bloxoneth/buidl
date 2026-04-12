@@ -9,11 +9,11 @@ const docContent: DocContent = {
     <>
       <h1>Overview</h1>
       <p>
-        BASEBLOX is an on-chain creative protocol that transforms digital building into a programmable cultural economy.
+        BUIDL is an on-chain creative protocol that transforms digital building into a programmable cultural economy.
       </p>
-      <h2>What is BASEBLOX?</h2>
+      <h2>What is BUIDL?</h2>
       <p>
-        BASEBLOX combines 3D voxel art, programmable matter economics, and blockchain technology to create a unique
+        BUIDL combines 3D voxel art, programmable matter economics, and blockchain technology to create a unique
         creative ecosystem where:
       </p>
       <ul>
@@ -42,10 +42,10 @@ const docContent: DocContent = {
   protocol: (
     <>
       <h1>Protocol Architecture</h1>
-      <p>BASEBLOX is built on a foundation of conserved matter, licensable geometry, and cultural computation.</p>
+      <p>BUIDL is built on a foundation of conserved matter, licensable geometry, and cultural computation.</p>
       <h2>Core Primitives</h2>
       <h3>BLOX - Programmable Matter</h3>
-      <p>BLOX is the fundamental unit of mass in the BASEBLOX universe:</p>
+      <p>BLOX is the fundamental unit of mass in the BUIDL universe:</p>
       <ul>
         <li>Fixed supply with no inflation</li>
         <li>Locked into BUILDS during creation</li>
@@ -73,7 +73,7 @@ const docContent: DocContent = {
   building: (
     <>
       <h1>Building Guide</h1>
-      <p>Learn how to create structures in BASEBLOX using the 3D builder interface.</p>
+      <p>Learn how to create structures in BUIDL using the 3D builder interface.</p>
       <h2>Getting Started</h2>
       <ol>
         <li>Connect your wallet and ensure you have BLOX tokens</li>
@@ -110,7 +110,7 @@ const docContent: DocContent = {
   tokenomics: (
     <>
       <h1>Tokenomics</h1>
-      <p>Understanding the economic model of BASEBLOX.</p>
+      <p>Understanding the economic model of BUIDL.</p>
       <h2>BLOX Token</h2>
       <ul>
         <li>
@@ -155,7 +155,7 @@ const docContent: DocContent = {
   gameplay: (
     <>
       <h1>Gameplay & Mechanics</h1>
-      <p>BASEBLOX is not a traditional game - it's a creative protocol with emergent gameplay.</p>
+      <p>BUIDL is not a traditional game - it's a creative protocol with emergent gameplay.</p>
       <h2>Player Roles</h2>
       <h3>Builders</h3>
       <ul>
@@ -197,7 +197,7 @@ const docContent: DocContent = {
   "smart-contracts": (
     <>
       <h1>Smart Contracts</h1>
-      <p>Technical details about the BASEBLOX smart contract architecture.</p>
+      <p>Technical details about the BUIDL smart contract architecture.</p>
       <h2>Core Contracts</h2>
       <h3>BLOX.sol</h3>
       <p>ERC-20 token contract for BLOX with:</p>
@@ -233,7 +233,7 @@ const docContent: DocContent = {
   api: (
     <>
       <h1>API Reference</h1>
-      <p>Developer resources for integrating with BASEBLOX.</p>
+      <p>Developer resources for integrating with BUIDL.</p>
       <h2>REST API</h2>
       <h3>GET /api/builds</h3>
       <p>Retrieve all BUILDS or filter by creator, date, or Builder Weight.</p>
@@ -246,7 +246,7 @@ const docContent: DocContent = {
         <code>{`GET /api/bricks?sort=usage`}</code>
       </pre>
       <h2>GraphQL</h2>
-      <p>Query the BASEBLOX subgraph for detailed on-chain data.</p>
+      <p>Query the BUIDL subgraph for detailed on-chain data.</p>
       <pre>
         <code>{`{
   builds(first: 10, orderBy: builderWeight, orderDirection: desc) {
@@ -276,9 +276,9 @@ const contract = new ethers.Contract(
     <>
       <h1>Frequently Asked Questions</h1>
       <h2>General</h2>
-      <h3>What blockchain is BASEBLOX built on?</h3>
+      <h3>What blockchain is BUIDL built on?</h3>
       <p>
-        BASEBLOX MVP is deployed on Base (L2) for fast, cheap transactions, with plans to expand to Ethereum mainnet and
+        BUIDL MVP is deployed on Base (L2) for fast, cheap transactions, with plans to expand to Ethereum mainnet and
         Solana.
       </p>
       <h3>Do I need to know how to code?</h3>

@@ -1,4 +1,4 @@
-// Web3 hooks for BASEBLOX
+// Web3 hooks for BUIDL
 export { useBloxBalance } from "./useBloxBalance"
 export { useMintBuild, type MintStep, type MintResult, type MintBrickParams, type MintBuildParams } from "./useMintBuild"
 export { useBuildState, type UseBuildStateResult } from "./useBuildState"

@@ -53,7 +53,7 @@ function expectEnv(name) {
 }
 
 function redisKey(chainId, key) {
-  return `ethblox:${chainId}:${key}`;
+  return `buidl:${chainId}:${key}`;
 }
 
 function colorForType(t) {

@@ -4,18 +4,18 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* BASEBLOX light palette: white base + blue/grey accents */
-  --ethblox-bg: 215 33% 98%;
-  --ethblox-surface: 0 0% 100%;
-  --ethblox-surface-elevated: 214 36% 96%;
-  --ethblox-border: 215 20% 84%;
-  --ethblox-text-primary: 222 47% 11%;
-  --ethblox-text-secondary: 215 16% 40%;
-  --ethblox-text-tertiary: 215 12% 55%;
-  --ethblox-yellow: 218 84% 56%;
-  --ethblox-green: 210 35% 52%;
-  --ethblox-blue: 221 83% 53%;
-  --ethblox-accent-cyan: 217 91% 60%;
+  /* BUIDL light palette: white base + blue/grey accents */
+  --buidl-bg: 215 33% 98%;
+  --buidl-surface: 0 0% 100%;
+  --buidl-surface-elevated: 214 36% 96%;
+  --buidl-border: 215 20% 84%;
+  --buidl-text-primary: 222 47% 11%;
+  --buidl-text-secondary: 215 16% 40%;
+  --buidl-text-tertiary: 215 12% 55%;
+  --buidl-yellow: 218 84% 56%;
+  --buidl-green: 210 35% 52%;
+  --buidl-blue: 221 83% 53%;
+  --buidl-accent-cyan: 217 91% 60%;
 
   --background: 215 33% 98%;
   --foreground: 222 47% 11%;
@@ -148,14 +148,14 @@
   }
 }
 
-/* Added BASEBLOX custom utilities */
+/* Added BUIDL custom utilities */
 @layer utilities {
-  .ethblox-glow {
+  .buidl-glow {
     box-shadow: 0 0 20px rgba(37, 99, 235, 0.16);
   }
 
-  .ethblox-border-glow {
-    box-shadow: 0 0 0 1px hsl(var(--ethblox-blue));
+  .buidl-border-glow {
+    box-shadow: 0 0 0 1px hsl(var(--buidl-blue));
   }
 
   @keyframes float-up {

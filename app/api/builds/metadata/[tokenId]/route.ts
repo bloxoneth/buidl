@@ -2,13 +2,14 @@ import { NextResponse } from "next/server"
 import { ethers } from "ethers"
 import { redis } from "@/lib/redis"
 import { rk } from "@/lib/redis-keys"
-import { BUILD_NFT_ABI, CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { BUILD_NFT_ABI, CONTRACTS, RPC_URL } from "@/lib/contracts/buidl-contracts"
 import type { Build } from "@/lib/types"
 import { buildAnimationUrl } from "@/lib/animation-url"
 const env = (k: string) => (process.env[k] || "").trim()
 const ENABLE_ANIMATION_URL = env("ENABLE_ANIMATION_URL") === "1"
 const IMAGE_IPFS_GATEWAY_BASE = env("MARKETPLACE_IMAGE_GATEWAY_BASE") || "https://dweb.link/ipfs"
 const MARKETPLACE_FORCE_GATEWAY = env("MARKETPLACE_FORCE_GATEWAY") === "1"
+const METADATA_SCAN_FALLBACK = (env("METADATA_SCAN_FALLBACK") || "0") === "1"
 
 function isLikelyIpfsCid(v: string) {
   const s = String(v || "").trim()
@@ -43,7 +44,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ tokenId: string }> },
 ) {
-  const { tokenId } = await params
+  const { tokenId: rawTokenId } = await params
+  // Strip .json extension if present (contract appends .json to tokenURI)
+  const tokenId = rawTokenId.replace(/\.json$/i, "")
   const id = Number.parseInt(tokenId, 10)
   if (!Number.isFinite(id) || id < 1) {
     return NextResponse.json({ error: "invalid token id" }, { status: 400, headers: CORS_HEADERS })
@@ -56,7 +59,7 @@ export async function GET(
       return ""
     }
   })()
-  const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || requestOrigin || "https://baseblox-app.vercel.app").replace(
+  const appBaseUrl = (env("NEXT_PUBLIC_APP_URL") || env("NEXT_PUBLIC_APP_ORIGIN") || requestOrigin || "https://buidl-app.vercel.app").replace(
     /\/+$/,
     "",
   )
@@ -79,7 +82,7 @@ export async function GET(
             ? String(build.name).trim()
             : kind === 0
               ? `${Math.min(width, depth)}x${Math.max(width, depth)}-D${density}`
-              : `BASEBLOX ${kindLabel} #${id}`
+              : `BUIDL ${kindLabel} #${id}`
 
         const attributes: Array<{ trait_type: string; value: string | number }> = [
           { trait_type: "kind", value: kindLabel },
@@ -116,7 +119,7 @@ export async function GET(
         return NextResponse.json(
           {
             name,
-            description: `BASEBLOX ${kindLabel} - ${width}x${depth} density ${density}`,
+            description: `BUIDL ${kindLabel} - ${width}x${depth} density ${density}`,
             image: toMarketplaceImageUrl(image),
             ...(ENABLE_ANIMATION_URL ? { animation_url: buildAnimationUrl(id, appBaseUrl) } : {}),
             external_url: `${appBaseUrl}/explore/${id}`,
@@ -147,13 +150,13 @@ export async function GET(
       if (buildId) {
         build = await redis.get<Build>(rk(`build:${buildId}`))
       }
-      // If mapped build is missing or synthetic, scan for a richer record with same tokenId.
+      // If mapped build is missing or synthetic, optionally scan for a richer record with same tokenId.
       const mappedLooksSynthetic =
         !build ||
         (String(build.id || "").startsWith("build_backfilled_") &&
           !build.buildHash &&
           (!build.composition || Object.keys(build.composition).length === 0))
-      if (mappedLooksSynthetic) {
+      if (mappedLooksSynthetic && METADATA_SCAN_FALLBACK) {
         const keys = await redis.keys(rk("build:*"))
         for (const key of keys) {
           if (key.startsWith(rk("build:token:")) || key.startsWith(rk("build:hash:"))) continue
@@ -188,7 +191,7 @@ export async function GET(
         ? String(build.name).trim()
         : kind === 0
           ? `${Math.min(width, depth)}x${Math.max(width, depth)}-D${density}`
-          : `BASEBLOX ${kindLabel} #${id}`
+          : `BUIDL ${kindLabel} #${id}`
 
     const attributes: Array<{ trait_type: string; value: string | number }> = [
       { trait_type: "kind", value: kindLabel },
@@ -226,7 +229,7 @@ export async function GET(
     return NextResponse.json(
       {
         name,
-        description: `BASEBLOX ${kindLabel} - ${width}x${depth} density ${density}`,
+        description: `BUIDL ${kindLabel} - ${width}x${depth} density ${density}`,
         image: toMarketplaceImageUrl(image),
         ...(ENABLE_ANIMATION_URL ? { animation_url: buildAnimationUrl(id, appBaseUrl) } : {}),
         external_url: `${appBaseUrl}/explore/${id}`,

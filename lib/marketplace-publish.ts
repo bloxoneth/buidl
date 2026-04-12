@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { ethers } from "ethers"
-import { CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { CONTRACTS, RPC_URL } from "@/lib/contracts/buidl-contracts"
 
 const execFileAsync = promisify(execFile)
 
@@ -153,7 +153,7 @@ async function replicateCidToSecondaryPinning(cid: string, tokenId: number, warn
       body: JSON.stringify({
         hashToPin: cid,
         pinataMetadata: {
-          name: `baseblox-${tokenId}`,
+          name: `buidl-${tokenId}`,
           keyvalues: { tokenId: String(tokenId), source: "marketplace-publish" },
         },
       }),

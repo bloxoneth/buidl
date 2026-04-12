@@ -7,7 +7,7 @@ function normalizedPrefix(): string {
 }
 
 export function chainNamespace(): string {
-  return normalizedPrefix() || `ethblox:${CHAIN_NS}:`
+  return normalizedPrefix() || `buidl:${CHAIN_NS}:`
 }
 
 export function rk(key: string): string {

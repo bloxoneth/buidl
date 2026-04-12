@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" fill="none">
+  <rect width="1400" height="900" fill="#F6F8FC"/>
+  <rect x="80" y="120" width="580" height="660" rx="24" fill="#111318"/>
+  <rect x="740" y="120" width="580" height="660" rx="24" fill="#FFFFFF" stroke="#D9E0EC" stroke-width="4"/>
+  <text x="130" y="230" fill="#F2C94C" font-family="monospace" font-size="84" font-weight="700">BUIDL</text>
+  <text x="790" y="230" fill="#2563EB" font-family="monospace" font-size="84" font-weight="700">BUIDL</text>
+  <text x="130" y="320" fill="#E5E7EB" font-family="monospace" font-size="30">Programmable matter sandbox</text>
+  <text x="790" y="320" fill="#334155" font-family="monospace" font-size="30">Live on Base, mint + build</text>
+  <rect x="130" y="390" width="480" height="280" rx="16" fill="#1F2937"/>
+  <rect x="790" y="390" width="480" height="280" rx="16" fill="#EEF2FF"/>
+  <text x="130" y="760" fill="#F2C94C" font-family="monospace" font-size="38" font-weight="700">CREATE · COLLECT · BUILD</text>
+  <text x="790" y="760" fill="#2563EB" font-family="monospace" font-size="38" font-weight="700">PLAY · EARN · EXPLORE</text>
+</svg>

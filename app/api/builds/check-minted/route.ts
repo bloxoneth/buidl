@@ -3,7 +3,7 @@ import { redis } from "@/lib/redis"
 import { rk, rpat } from "@/lib/redis-keys"
 import { normalizeBrickKey } from "@/data/bricks"
 import { ethers } from "ethers"
-import { BUILD_NFT_ABI, CONTRACTS, RPC_URL } from "@/lib/contracts/ethblox-contracts"
+import { BUILD_NFT_ABI, CONTRACTS, RPC_URL } from "@/lib/contracts/buidl-contracts"
 
 // Returns a set of all minted brick specs (kind=0) from Redis
 // Format: ["1x2-D1", "2x2-D1", ...] always normalized (min x max)
@@ -94,11 +94,20 @@ export async function GET() {
       }),
     )
 
-    // Always try to refresh mapping from on-chain truth so stale Redis records
+    // Refresh mapping from on-chain truth so stale Redis records
     // cannot point a spec (e.g. 1x3-D1) to the wrong tokenId.
+    // Use a minimal ABI to avoid ethers selector collisions with duplicate
+    // function aliases in the full BUILD_NFT_ABI.
+    const onChainVerified = new Set<string>()
     try {
       const provider = new ethers.JsonRpcProvider(RPC_URL)
-      const buildNFT = new ethers.Contract(CONTRACTS.BUILD_NFT, BUILD_NFT_ABI, provider)
+      const scanABI = [
+        "function nextTokenId() view returns (uint256)",
+        "function kindOf(uint256 tokenId) view returns (uint8)",
+        "function brickSpecOf(uint256 tokenId) view returns (uint8 width, uint8 depth, uint16 density)",
+        "function ownerOf(uint256 tokenId) view returns (address)",
+      ]
+      const buildNFT = new ethers.Contract(CONTRACTS.BUILD_NFT, scanABI, provider)
       const nextTokenId = await buildNFT.nextTokenId()
       const chunkSize = 50n
 
@@ -107,13 +116,13 @@ export async function GET() {
         const ids: bigint[] = []
         for (let id = start; id < end; id++) ids.push(id)
 
-        const existsResults = await Promise.allSettled(ids.map((id) => buildNFT.exists(id)))
+        // Check existence via ownerOf (reverts for non-existent tokens)
+        const existsResults = await Promise.allSettled(
+          ids.map((id) => buildNFT.ownerOf(id))
+        )
         const existingIds: bigint[] = []
         for (let i = 0; i < ids.length; i++) {
-          const result = existsResults[i]
-          if (result.status !== "fulfilled") continue
-          if (!Boolean(result.value)) continue
-          existingIds.push(ids[i])
+          if (existsResults[i].status === "fulfilled") existingIds.push(ids[i])
         }
 
         if (existingIds.length === 0) continue
@@ -139,6 +148,7 @@ export async function GET() {
           const [w, d, dens] = result.value
           const spec = normalizeBrickKey(Number(w), Number(d), Number(dens))
           mintedSet.add(spec)
+          onChainVerified.add(spec)
           // On-chain truth should override any stale Redis-derived mapping.
           brickSpecToTokenId[spec] = brickTokenIds[i]
           if (Number(w) === 1 && Number(d) === 1) {
@@ -147,31 +157,9 @@ export async function GET() {
         }
       }
 
-      // Final prune: remove any Redis-derived spec mapping that does not match
-      // an existing on-chain kind=0 brick with the same normalized spec.
-      const entries = Object.entries(brickSpecToTokenId)
-      for (const [spec, tokenId] of entries) {
-        try {
-          const id = BigInt(tokenId)
-          const exists = Boolean(await buildNFT.exists(id))
-          if (!exists) {
-            delete brickSpecToTokenId[spec]
-            mintedSet.delete(spec)
-            continue
-          }
-          const kind = Number(await buildNFT.kindOf(id))
-          if (kind !== 0) {
-            delete brickSpecToTokenId[spec]
-            mintedSet.delete(spec)
-            continue
-          }
-          const [w, d, dens] = await buildNFT.brickSpecOf(id)
-          const canonical = normalizeBrickKey(Number(w), Number(d), Number(dens))
-          if (canonical !== spec) {
-            delete brickSpecToTokenId[spec]
-            mintedSet.delete(spec)
-          }
-        } catch {
+      // Prune only Redis-derived entries that were NOT verified on-chain.
+      for (const [spec] of Object.entries(brickSpecToTokenId)) {
+        if (!onChainVerified.has(spec)) {
           delete brickSpecToTokenId[spec]
           mintedSet.delete(spec)
         }

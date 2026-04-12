@@ -1,22 +1,25 @@
 import { ethers } from "ethers"
 import { computeSpecKey } from "../brickSpec"
 
-const env = (key: string) => (process.env[key] ?? "").trim()
+// IMPORTANT: Next.js Turbopack only statically replaces process.env.NEXT_PUBLIC_*
+// when accessed as LITERAL property names, NOT via dynamic process.env[key].
+// All NEXT_PUBLIC_* vars MUST be referenced directly for client-side bundles.
+const _trim = (v: string | undefined) => (v ?? "").trim()
 const isLikelyIpfsCid = (v: string) => /^(bafy[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})$/.test(String(v || "").trim())
 
 // Constants
-export const FEE_PER_MINT = ethers.parseEther("0.001") // 0.001 ETH mint fee (test)
+export const FEE_PER_MINT = ethers.parseEther("0.001") // 0.001 ETH mint fee
 export const BURN_FEE = ethers.parseEther("0.005") // 0.005 ETH burn fee
 export const BLOX_DECIMALS = 18n
-export const MINT_GAS_LIMIT = 700_000n // 600-800k recommended for BuildNFT.mint
-export const MINT_GAS_LIMIT_FORCE = 800_000n // upper bound when force-sending
+export const MINT_GAS_LIMIT = 2_000_000n // atomic license flow scales with voxel count
+export const MINT_GAS_LIMIT_FORCE = 2_500_000n // upper bound when force-sending
 
 // Metadata via IPFS - baseTokenURI is set on-chain, no per-token URIs needed
 export const BASE_METADATA_CID = "bafybeihf3bprrm6gr5prmzatwnjlnl3pmygw5xh44tvnwccejqo2yfoaii"
 export const BASE_METADATA_URI =
-  env("NEXT_PUBLIC_BASE_METADATA_URI") || `ipfs://${BASE_METADATA_CID}`
+  _trim(process.env.NEXT_PUBLIC_BASE_METADATA_URI) || `ipfs://${BASE_METADATA_CID}`
 export const BASE_METADATA_GATEWAY =
-  env("NEXT_PUBLIC_BASE_METADATA_GATEWAY") ||
+  _trim(process.env.NEXT_PUBLIC_BASE_METADATA_GATEWAY) ||
   `https://gateway.pinata.cloud/ipfs/${BASE_METADATA_CID}`
 export const tokenMetadataURI = (tokenId: string | number) =>
   `${BASE_METADATA_URI}/${tokenId}.json`
@@ -24,11 +27,12 @@ export const tokenMetadataGatewayURL = (tokenId: string | number) =>
   `${BASE_METADATA_GATEWAY}/${tokenId}.json`
 
 // Images via IPFS - stored at root of images CID (no /images/ folder)
+const _imagesCidRaw = _trim(process.env.NEXT_PUBLIC_IMAGES_CID)
 export const IMAGES_CID =
-  (isLikelyIpfsCid(env("NEXT_PUBLIC_IMAGES_CID")) ? env("NEXT_PUBLIC_IMAGES_CID") : "") ||
+  (isLikelyIpfsCid(_imagesCidRaw) ? _imagesCidRaw : "") ||
   "bafybeibnk4kq7mesrs7wtwi2ypwlnxhazoqkwgoycol55n64tqseox2q2a"
 export const IMAGES_GATEWAY =
-  env("NEXT_PUBLIC_IMAGES_GATEWAY") ||
+  _trim(process.env.NEXT_PUBLIC_IMAGES_GATEWAY) ||
   `https://gateway.pinata.cloud/ipfs/${IMAGES_CID}`
 export const tokenImageURI = (tokenId: string | number) =>
   `ipfs://${IMAGES_CID}/${tokenId}.png`
@@ -37,7 +41,7 @@ export const tokenImageGatewayURL = (tokenId: string | number) =>
 
 // Resolve any ipfs:// URI to a gateway URL
 export const resolveIPFS = (uri: string) => {
-  const gateway = env("NEXT_PUBLIC_IPFS_GATEWAY") || "https://gateway.pinata.cloud/ipfs/"
+  const gateway = _trim(process.env.NEXT_PUBLIC_IPFS_GATEWAY) || "https://gateway.pinata.cloud/ipfs/"
   return uri.replace("ipfs://", gateway)
 }
 
@@ -47,28 +51,34 @@ export const BUILD_KIND = {
   BUILD: 1, // kind>0 for composite builds
 } as const
 
-// Network: configurable via env, defaults to Base Sepolia
-const DEFAULT_CHAIN_ID = 84532
-const DEFAULT_CHAIN_HEX = "0x14a34"
-export const CHAIN_ID = Number(env("NEXT_PUBLIC_CHAIN_ID") || DEFAULT_CHAIN_ID)
+// Network: configurable via env, defaults to Base Mainnet
+const DEFAULT_CHAIN_ID = 8453
+const DEFAULT_CHAIN_HEX = "0x2105"
+export const CHAIN_ID = Number(_trim(process.env.NEXT_PUBLIC_CHAIN_ID) || DEFAULT_CHAIN_ID)
 export const RPC_URL =
-  env("NEXT_PUBLIC_RPC_URL") ||
-  env("BASE_SEPOLIA_RPC_URL") ||
-  "https://sepolia.base.org"
+  _trim(process.env.NEXT_PUBLIC_RPC_URL) ||
+  "https://mainnet.base.org"
 
-// Contract addresses (env override with Base Sepolia fallback)
+// Contract addresses — each must use a direct process.env.NEXT_PUBLIC_* literal
 export const CONTRACTS = {
   MOCK_BLOX:
-    env("NEXT_PUBLIC_BLOX_ADDRESS") || "0x6578d53995FEB0e486135b893B8bC16AE1a5Ec52",
+    _trim(process.env.NEXT_PUBLIC_BLOX_ADDRESS) || "",
   BUILD_NFT:
-    env("NEXT_PUBLIC_BUILDNFT_ADDRESS") || "0x2e4ff64808927e1fe743145bc1244c7e2fa39c73",
+    _trim(process.env.NEXT_PUBLIC_BUILDNFT_ADDRESS) || "",
   LICENSE_REGISTRY:
-    env("NEXT_PUBLIC_LICENSE_REGISTRY_ADDRESS") || "0x54ecFA6a349d45865EDeb7ED5Af5820418F56A12",
+    _trim(process.env.NEXT_PUBLIC_LICENSE_REGISTRY_ADDRESS) || "",
   LICENSE_NFT:
-    env("NEXT_PUBLIC_LICENSE_NFT_ADDRESS") || "0xCE9d8d013F9E800f2A75658Eaf77c5B1e3bA73b3",
+    _trim(process.env.NEXT_PUBLIC_LICENSE_NFT_ADDRESS) || "",
   DISTRIBUTOR:
-    env("NEXT_PUBLIC_DISTRIBUTOR_ADDRESS") || "0x9CB35FfedC553753CCDFED983F4ef8f3098A457A",
-  BASE_SEPOLIA_CHAIN_ID: env("NEXT_PUBLIC_CHAIN_HEX") || DEFAULT_CHAIN_HEX,
+    _trim(process.env.NEXT_PUBLIC_DISTRIBUTOR_ADDRESS) || "",
+  GEOMETRY_REGISTRY:
+    _trim(process.env.NEXT_PUBLIC_GEOMETRY_REGISTRY_ADDRESS) || "",
+  RENDERER:
+    _trim(process.env.NEXT_PUBLIC_RENDERER_ADDRESS) || "",
+  WORLD_REGISTRY:
+    _trim(process.env.NEXT_PUBLIC_WORLD_REGISTRY_ADDRESS) || "",
+  CHAIN_HEX: _trim(process.env.NEXT_PUBLIC_CHAIN_HEX) || DEFAULT_CHAIN_HEX,
+  BASE_SEPOLIA_CHAIN_ID: _trim(process.env.NEXT_PUBLIC_CHAIN_HEX) || DEFAULT_CHAIN_HEX,
 }
 
 // Minimal ABIs
@@ -82,44 +92,49 @@ export const MOCK_BLOX_ABI = [
 
 // BuildNFT ABI
 // Confirmed from on-chain tx 0x37c60c0d: MethodID 0x0923bb28
-// mint(bytes32,uint256,string,uint256[],uint256[],uint8,uint8,uint8,uint16)
+// mint(bytes32,uint256,bytes,uint256[],uint256[],(uint256,uint8,uint8,uint8,uint8,uint8,uint8)[],uint8,uint8,uint8,uint16)
 // Note: density is uint16 (NOT uint8)
 export const BUILD_NFT_ABI = [
-  "function mint(bytes32 geometryHash, uint256 mass, string uri, uint256[] componentBuildIds, uint256[] componentCounts, uint8 kind, uint8 width, uint8 depth, uint16 density) payable",
+  "function mint(bytes32 geometryHash, uint256 mass, bytes geometryData, uint256[] componentBuildIds, uint256[] componentCounts, (uint256 licenseTokenId, uint8 rotation, uint8 x, uint8 y, uint8 z, uint8 colourIndex, uint8 useMode)[] manifest, uint8 kind, uint8 width, uint8 depth, uint16 density) payable",
+  "function getManifest(uint256 tokenId) view returns ((uint256 licenseTokenId, uint8 rotation, uint8 x, uint8 y, uint8 z, uint8 colourIndex, uint8 useMode)[])",
+  "function repaint(uint256 tokenId, bytes newVoxelData)",
+  "function geometryRegistry() view returns (address)",
+  "function renderer() view returns (address)",
   "function isMinter(address) view returns (bool)",
   "function mintingOpen() view returns (bool)",
-  // State reading
+  // State reading (public mappings — auto-getter names must match exactly)
   "function kindOf(uint256 tokenId) view returns (uint8)",
   "function geometryOf(uint256 tokenId) view returns (bytes32)",
   "function brickSpecOf(uint256 tokenId) view returns (uint8 width, uint8 depth, uint16 density)",
   "function lockedBloxOf(uint256 tokenId) view returns (uint256)",
-  "function kind(uint256 tokenId) view returns (uint8)",
-  "function geometryHash(uint256 tokenId) view returns (bytes32)",
-  "function brickSpec(uint256 tokenId) view returns (uint8 width, uint8 depth, uint16 density)",
-  "function lockedBlox(uint256 tokenId) view returns (uint256)",
+  "function brickSpecKeyOf(uint256 tokenId) view returns (bytes32)",
   "function escrowedLicenses(uint256 tokenId, uint256 licenseId) view returns (uint256)",
   "function maxMass() view returns (uint256)",
   "function nextTokenId() view returns (uint256)",
   "function hashToTokenId(bytes32) view returns (uint256)",
   "function brickSpecConsumed(bytes32) view returns (bool)",
-  "function paused() view returns (bool)",
   "function blox() view returns (address)",
-  "function bloxToken() view returns (address)",
   "function FEE_PER_MINT() view returns (uint256)",
   "function BURN_FEE() view returns (uint256)",
-  "function mintFee() view returns (uint256)",
   "function owner() view returns (address)",
   "function distributor() view returns (address)",
   // ERC721 standard
   "function balanceOf(address owner) view returns (uint256)",
   "function ownerOf(uint256 tokenId) view returns (address)",
   "function exists(uint256 tokenId) view returns (bool)",
-  "function safeOwnerOf(uint256 tokenId) view returns (address)",
+  "function ownerOfSafe(uint256 tokenId) view returns (address)",
   "function tokenURI(uint256 tokenId) view returns (string)",
   // Burn (only for builds, not bricks)
   "function burn(uint256 tokenId) payable",
   // Events
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+]
+
+// GeometryRegistry ABI
+export const GEOMETRY_REGISTRY_ABI = [
+  "function geometryData(uint256 tokenId) view returns (bytes)",
+  "function hashConsumed(bytes32 hash) view returns (bool)",
+  "function hasGeometry(uint256 tokenId) view returns (bool)",
 ]
 
 // LicenseRegistry ABI - maps component tokenIds to license IDs
@@ -129,7 +144,7 @@ export const LICENSE_REGISTRY_ABI = [
   "function buildIdForLicense(uint256 licenseId) view returns (uint256)",
   "function quote(uint256 buildId, uint256 qty) view returns (uint256)",
   "function pricingForLicense(uint256 licenseId) view returns (uint256 startPrice, uint256 step, uint256 maxSupply, uint256 maxPrice)",
-  "function mintLicenseForBuild(uint256 buildId, uint256 qty)",
+  "function mintLicenseForBuild(uint256 buildId, uint256 qty) payable",
   "function registerBuild(uint256 buildId, bytes32 expectedGeometryHash)",
   "function getLicenseId(uint256 componentTokenId) view returns (uint256)",
   "function getLicenseIds(uint256[] calldata componentTokenIds) view returns (uint256[])",
@@ -172,7 +187,7 @@ async function resolveDistributorAddress(provider: ethers.BrowserProvider): Prom
 }
 
 // Local storage registry for minted hashes
-const MINTED_HASHES_KEY = "ethblox_minted_hashes"
+const MINTED_HASHES_KEY = "buidl_minted_hashes"
 
 export function getMintedHashes(): Set<string> {
   if (typeof window === "undefined") return new Set()
@@ -239,13 +254,15 @@ export async function mintBuildNFT(
   provider: ethers.BrowserProvider,
   geometryHash: string,
   mass: number,
+  geometryData: Uint8Array = new Uint8Array(0),
 ): Promise<ethers.ContractTransactionResponse> {
   return mintBuildNFTWithParams(provider, {
     geometryHash,
     mass,
-    uri: "",
+    geometryData,
     componentBuildIds: [],
     componentCounts: [],
+    manifest: [],
     kind: 1,
     width: 0,
     depth: 0,
@@ -254,12 +271,23 @@ export async function mintBuildNFT(
 }
 
 // New mint function with correct payload format
+export interface PlacedComponent {
+  licenseTokenId: bigint
+  rotation: number // 0-23
+  x: number
+  y: number
+  z: number
+  colourIndex: number // 1-7
+  useMode: number // 0=COMPONENT, 1=COLLECTIBLE
+}
+
 export interface MintParams {
   geometryHash: string
   mass: number
-  uri: string
+  geometryData: Uint8Array // raw 3-bit voxel bytes (replaces uri)
   componentBuildIds: bigint[]
   componentCounts: bigint[]
+  manifest: PlacedComponent[]
   kind: number
   width: number
   depth: number
@@ -390,7 +418,8 @@ export async function runMintDiagnostics(
     results["density"] = params.density.toString()
     results["componentBuildIds"] = `[${params.componentBuildIds.map(String).join(", ")}] (length: ${params.componentBuildIds.length})`
     results["componentCounts"] = `[${params.componentCounts.map(String).join(", ")}] (length: ${params.componentCounts.length})`
-    results["uri"] = params.uri === "" ? '""  (empty string)' : params.uri
+    results["geometryData"] = `${params.geometryData.length} bytes`
+    results["manifest"] = `${params.manifest.length} entries`
     
   } catch (err: any) {
     results["Diagnostic Error"] = err.message
@@ -412,15 +441,26 @@ export async function mintBuildNFTWithParams(
     throw new Error(`Calldata is empty or too short: "${data}"`)
   }
 
+  // V3: BuildNFT atomically mints licenses during _handleComponents, paid in ETH.
+  // Quote total license cost for all components and add to msg.value.
+  let totalLicenseCost = 0n
+  if (params.componentBuildIds.length > 0) {
+    const registry = new ethers.Contract(CONTRACTS.LICENSE_REGISTRY, LICENSE_REGISTRY_ABI, provider)
+    for (let i = 0; i < params.componentBuildIds.length; i++) {
+      const cost = await registry.quote(params.componentBuildIds[i], params.componentCounts[i])
+      totalLicenseCost += cost
+    }
+  }
+
   return await signer.sendTransaction({
     to: CONTRACTS.BUILD_NFT,
     data,
-    value: FEE_PER_MINT,
+    value: FEE_PER_MINT + totalLicenseCost,
     gasLimit: forceSend ? MINT_GAS_LIMIT_FORCE : MINT_GAS_LIMIT,
   })
 }
 
-// Encode calldata for mint - density is uint16
+// Encode calldata for mint v2.0 - includes geometryData + manifest
 export function encodeMintCalldata(params: MintParams): string {
   const mintAbi = [{
     type: "function",
@@ -429,9 +469,18 @@ export function encodeMintCalldata(params: MintParams): string {
     inputs: [
       { name: "geometryHash", type: "bytes32" },
       { name: "mass", type: "uint256" },
-      { name: "uri", type: "string" },
+      { name: "geometryData", type: "bytes" },
       { name: "componentBuildIds", type: "uint256[]" },
       { name: "componentCounts", type: "uint256[]" },
+      { name: "manifest", type: "tuple[]", components: [
+        { name: "licenseTokenId", type: "uint256" },
+        { name: "rotation", type: "uint8" },
+        { name: "x", type: "uint8" },
+        { name: "y", type: "uint8" },
+        { name: "z", type: "uint8" },
+        { name: "colourIndex", type: "uint8" },
+        { name: "useMode", type: "uint8" },
+      ]},
       { name: "kind", type: "uint8" },
       { name: "width", type: "uint8" },
       { name: "depth", type: "uint8" },
@@ -443,14 +492,26 @@ export function encodeMintCalldata(params: MintParams): string {
   return iface.encodeFunctionData("mint", [
     params.geometryHash,
     BigInt(params.mass),
-    params.uri,
+    params.geometryData,
     params.componentBuildIds,
     params.componentCounts,
+    params.manifest,
     params.kind,
     params.width,
     params.depth,
     params.density,
   ])
+}
+
+// Repaint a build (change colours, keep geometry)
+export async function repaintBuild(
+  provider: ethers.BrowserProvider,
+  tokenId: bigint,
+  newVoxelData: Uint8Array,
+): Promise<ethers.ContractTransactionResponse> {
+  const signer = await provider.getSigner()
+  const contract = new ethers.Contract(CONTRACTS.BUILD_NFT, BUILD_NFT_ABI, signer)
+  return await contract.repaint(tokenId, newVoxelData)
 }
 
 // Simulate mint via eth_call using the signer (ensures from is set correctly)
@@ -461,14 +522,24 @@ export async function simulateMint(
 ): Promise<{ success: boolean; result: string; decodedError?: string }> {
   const calldata = encodeMintCalldata(params)
   const signer = await provider.getSigner()
-  
+
+  // V3: Quote license costs and include in simulation value
+  let totalLicenseCost = 0n
+  if (params.componentBuildIds.length > 0) {
+    const registry = new ethers.Contract(CONTRACTS.LICENSE_REGISTRY, LICENSE_REGISTRY_ABI, provider)
+    for (let i = 0; i < params.componentBuildIds.length; i++) {
+      const cost = await registry.quote(params.componentBuildIds[i], params.componentCounts[i])
+      totalLicenseCost += cost
+    }
+  }
+
   // Use signer.call() which automatically sets from to the signer's address
   // and properly routes through MetaMask's eth_call
   try {
     const result = await signer.call({
       to: CONTRACTS.BUILD_NFT,
       data: calldata,
-      value: FEE_PER_MINT,
+      value: FEE_PER_MINT + totalLicenseCost,
       gasLimit: MINT_GAS_LIMIT, // Match normal mint gas limit to avoid false simulation reverts
     })
     return { success: true, result }
@@ -497,7 +568,7 @@ export async function simulateMint(
       } else if (msg.includes("require(false)")) {
         decodedError = "Bare require(false) - contract rejected call. Check BLOX approval, balance, and fee."
       } else {
-        decodedError = `No revert data. Error: ${msg.slice(0, 200)}`
+        decodedError = `No revert data — likely a BLOX transfer failure. Ensure BLOX is approved to BuildNFT (covers mass lock + license fees). Click "Approve BLOX" and retry. Error: ${msg.slice(0, 200)}`
       }
     }
     
@@ -527,14 +598,16 @@ export async function mintBrick(
   provider: ethers.BrowserProvider,
   geometryHash: string,
   spec: BrickSpec,
+  geometryData: Uint8Array = new Uint8Array(0),
 ): Promise<ethers.ContractTransactionResponse> {
   const mass = Math.max(1, spec.width * spec.depth)
   return mintBuildNFTWithParams(provider, {
     geometryHash,
     mass,
-    uri: "",
+    geometryData,
     componentBuildIds: [],
     componentCounts: [],
+    manifest: [],
     kind: 0,
     width: spec.width,
     depth: spec.depth,
@@ -550,13 +623,17 @@ export async function mintBuild(
   mass: number,
   kind: number,
   componentTokenIds: bigint[],
+  componentCounts: bigint[] = [],
+  geometryData: Uint8Array = new Uint8Array(0),
+  manifest: PlacedComponent[] = [],
 ): Promise<ethers.ContractTransactionResponse> {
   return mintBuildNFTWithParams(provider, {
     geometryHash,
     mass,
-    uri: "",
+    geometryData,
     componentBuildIds: componentTokenIds,
-    componentCounts: componentTokenIds.map(() => 1n),
+    componentCounts: componentCounts.length > 0 ? componentCounts : componentTokenIds.map(() => 1n),
+    manifest,
     kind,
     width: 0,
     depth: 0,
@@ -671,15 +748,9 @@ export async function mintLicenseForBuild(
 ): Promise<ethers.ContractTransactionResponse> {
   const signer = await provider.getSigner()
   const registry = new ethers.Contract(CONTRACTS.LICENSE_REGISTRY, LICENSE_REGISTRY_ABI, signer)
+  // V3: License fees are paid in ETH, not BLOX
   const price = await registry.quote(buildId, qty)
-  const owner = await signer.getAddress()
-  const blox = new ethers.Contract(CONTRACTS.MOCK_BLOX, MOCK_BLOX_ABI, signer)
-  const allowance = await blox.allowance(owner, CONTRACTS.LICENSE_REGISTRY)
-  if (allowance < price) {
-    const approveTx = await blox.approve(CONTRACTS.LICENSE_REGISTRY, ethers.MaxUint256)
-    await approveTx.wait()
-  }
-  return await registry.mintLicenseForBuild(buildId, qty)
+  return await registry.mintLicenseForBuild(buildId, qty, { value: price })
 }
 
 export interface LicensePurchaseResult {
@@ -688,6 +759,12 @@ export interface LicensePurchaseResult {
   txHashes: string[]
 }
 
+/**
+ * Buy missing licenses for standalone use (outside of mint).
+ * NOTE: In V3, BuildNFT.mint() atomically purchases licenses during _handleComponents,
+ * so this is NOT needed before minting. Only use for pre-buying licenses separately.
+ * License fees are now paid in ETH.
+ */
 export async function buyMissingLicensesForComponents(
   provider: ethers.BrowserProvider,
   account: string,
@@ -713,6 +790,7 @@ export async function buyMissingLicensesForComponents(
     const statusNow = await getComponentLicenseStatus(provider, account, [buildId])
     const hasLicense = (statusNow.balances[0] ?? 0n) >= 1n
     if (!hasLicense) {
+      // V3: License fees paid in ETH
       const tx = await mintLicenseForBuild(provider, buildId, 1n)
       result.txHashes.push(tx.hash)
       await tx.wait()

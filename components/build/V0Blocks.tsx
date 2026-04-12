@@ -4,7 +4,7 @@ import React from "react"
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { Canvas, useThree, useFrame } from "@react-three/fiber"
-import { OrbitControls } from "@react-three/drei"
+import { OrbitControls, RoundedBox } from "@react-three/drei"
 import { useRouter } from "next/navigation"
 import * as THREE from "three"
 import {
@@ -46,14 +46,21 @@ import { useBloxBalance } from "@/lib/web3/hooks/useBloxBalance"
 import { BrickMintModal } from "./BrickMintModal"
 import { calculateTotalBlox } from "@/lib/brick-utils"
 import { getBrickByDimensions, type BrickNFT, BRICK_DENSITIES, normalizeBrickKey } from "@/data/bricks"
-import { BUILD_NFT_ABI, CONTRACTS } from "@/lib/contracts/ethblox-contracts"
-import { computeSpecKey } from "@/lib/brickSpec"
+import { isBrickSpecMintedOnChain } from "@/lib/contracts/buidl-contracts"
 import { ethers } from "ethers"
 
 const BRICK_HEIGHT = 1.0
 const GROUND_HEIGHT = 0.25
 const GRID_UNIT = 1.0
 const LAYER_GAP = 0.005
+const DEBUG_V0 = false
+const MINTED_BRICKS_CACHE_KEY = `buidl_minted_brick_keys_${process.env.NEXT_PUBLIC_CHAIN_ID ?? "84532"}_${String(process.env.NEXT_PUBLIC_BUILDNFT_ADDRESS ?? "unknown").toLowerCase()}`
+
+function normalizeDimKey(width: number, depth: number): string {
+  const w = Math.min(Number(width) || 1, Number(depth) || 1)
+  const d = Math.max(Number(width) || 1, Number(depth) || 1)
+  return `${w}x${d}`
+}
 
 const COLOR_THEMES = {
   default: [
@@ -90,6 +97,7 @@ const COLOR_THEMES = {
 
 type Mode = "build" | "move" | "erase"
 type Theme = "default" | "muted" | "monochrome"
+type RenderStyle = "classic" | "studless"
 
 // V0BlocksProps interface removed - using inline type definition
 
@@ -97,30 +105,21 @@ const BrickMesh = React.memo(function BrickMesh({
   brick,
   isGhost,
   isEraseHover,
+  renderStyle = "classic",
   onClick,
 }: {
   brick: Brick
   isGhost?: boolean
   isEraseHover?: boolean
+  renderStyle?: RenderStyle
   onClick?: () => void
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const materialRef = useRef<THREE.MeshStandardMaterial>(null)
 
-  // Only run animation frame for ghost/hover bricks
-  useFrame(
-    isGhost || isEraseHover
-      ? (state) => {
-          if (materialRef.current) {
-            const pulse = Math.sin(state.clock.elapsedTime * 4) * 0.05 + 0.95
-            materialRef.current.emissiveIntensity = pulse
-          }
-        }
-      : () => {},
-  )
-
   // Memoize studs array to avoid recalculation on every render
   const studs = React.useMemo(() => {
+    if (renderStyle !== "classic") return []
     const result: [number, number, number][] = []
     for (let i = 0; i < Math.floor(brick.width); i++) {
       for (let j = 0; j < Math.floor(brick.depth); j++) {
@@ -128,27 +127,64 @@ const BrickMesh = React.memo(function BrickMesh({
       }
     }
     return result
-  }, [brick.width, brick.depth])
+  }, [brick.width, brick.depth, renderStyle])
 
   const color = isGhost ? "#ffff00" : isEraseHover ? "#ff0000" : brick.color
   const opacity = isGhost || isEraseHover ? 0.6 : 1.0
   const emissive = isGhost ? "#ffff00" : isEraseHover ? "#ff0000" : "#000000"
+  const roundedRadius = Math.min(0.09, brick.width * 0.09, brick.depth * 0.09)
 
   return (
     <group ref={groupRef} position={brick.position}>
-      <mesh onClick={onClick} castShadow receiveShadow>
-        <boxGeometry args={[brick.width, BRICK_HEIGHT, brick.depth]} />
-        <meshStandardMaterial
-          ref={materialRef}
-          color={color}
-          transparent={opacity < 1}
-          opacity={opacity}
-          roughness={0.2}
-          metalness={0.15}
-          emissive={emissive}
-          emissiveIntensity={isGhost || isEraseHover ? 0.9 : 0}
-        />
-      </mesh>
+      {renderStyle === "studless" ? (
+        <>
+          <RoundedBox
+            args={[brick.width, BRICK_HEIGHT, brick.depth]}
+            radius={roundedRadius}
+            smoothness={3}
+            onClick={onClick}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial
+              ref={materialRef}
+              color={color}
+              transparent={opacity < 1}
+              opacity={opacity}
+              roughness={0.24}
+              metalness={0.12}
+              emissive={emissive}
+              emissiveIntensity={isGhost || isEraseHover ? 0.9 : 0}
+            />
+          </RoundedBox>
+          {/* Subtle edge ridge in studless mode */}
+          <mesh scale={[1.01, 1.01, 1.01]} castShadow={false} receiveShadow={false}>
+            <boxGeometry args={[brick.width, BRICK_HEIGHT, brick.depth]} />
+            <meshStandardMaterial
+              color="#dbeafe"
+              transparent
+              opacity={opacity < 1 ? 0.08 : 0.1}
+              roughness={0.35}
+              metalness={0.05}
+              side={THREE.BackSide}
+            />
+          </mesh>
+        </>
+      ) : (
+        <mesh onClick={onClick} castShadow receiveShadow>
+          <boxGeometry args={[brick.width, BRICK_HEIGHT, brick.depth]} />
+          <meshStandardMaterial
+            ref={materialRef}
+            color={color}
+            transparent={opacity < 1}
+            opacity={opacity}
+            roughness={0.2}
+            metalness={0.15}
+            emissive={emissive}
+            emissiveIntensity={isGhost || isEraseHover ? 0.9 : 0}
+          />
+        </mesh>
+      )}
       {studs.map((pos, i) => (
         <mesh key={i} position={pos} castShadow>
           <sphereGeometry args={[0.25, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
@@ -507,6 +543,7 @@ function Scene({
   isMobile,
   ghostPositionRef,
   hoverGroupIdFromScene,
+  renderStyle,
 }: {
   bricks: Brick[]
   ghostBrick: Brick | null
@@ -523,11 +560,14 @@ function Scene({
   isMobile: boolean
   ghostPositionRef: React.MutableRefObject<{ x: number; z: number } | null>
   hoverGroupIdFromScene: string | null
+  renderStyle: RenderStyle
 }) {
   const { gl, scene, camera } = useThree()
   const controlsRef = useRef<any>(null)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const isDraggingRef = useRef(false)
+  const rafMoveRef = useRef<number | null>(null)
+  const lastPointerEventRef = useRef<PointerEvent | null>(null)
   
   // Reusable THREE objects to avoid GC pressure from creating new ones every frame
   const raycasterRef = useRef(new THREE.Raycaster())
@@ -549,35 +589,42 @@ function Scene({
     }
   }, [cameraRef])
 
-  // Only run frame updates when playing - skip entirely otherwise
-  useFrame(
-    isPlaying
-      ? () => {
-          if (controlsRef.current) {
-            controlsRef.current.autoRotateSpeed = 1
-          }
-        }
-      : () => {},
-  )
+  useFrame(() => {
+    if (isPlaying && controlsRef.current) controlsRef.current.autoRotateSpeed = 1
+  })
 
   useEffect(() => {
     // Don't track mouse movement when in move mode or shift is pressed - let OrbitControls handle it
     if (mode === "move" || isShiftPressed) return
 
     const handlePointerMove = (e: PointerEvent) => {
-      if (isMobile && touchStartRef.current) {
-        const dx = e.clientX - touchStartRef.current.x
-        const dy = e.clientY - touchStartRef.current.y
-        const distance = Math.sqrt(dx * dx + dy * dy)
-        if (distance > 10) {
-          isDraggingRef.current = true
+      lastPointerEventRef.current = e
+      if (rafMoveRef.current !== null) return
+      rafMoveRef.current = window.requestAnimationFrame(() => {
+        rafMoveRef.current = null
+        const evt = lastPointerEventRef.current
+        if (!evt) return
+        if (isMobile && touchStartRef.current) {
+          const dx = evt.clientX - touchStartRef.current.x
+          const dy = evt.clientY - touchStartRef.current.y
+          const distance = Math.sqrt(dx * dx + dy * dy)
+          if (distance > 10) {
+            isDraggingRef.current = true
+          }
         }
-      }
-      onMouseMove(e)
+        onMouseMove(evt)
+      })
     }
 
     gl.domElement.addEventListener("pointermove", handlePointerMove)
-    return () => gl.domElement.removeEventListener("pointermove", handlePointerMove)
+    return () => {
+      gl.domElement.removeEventListener("pointermove", handlePointerMove)
+      if (rafMoveRef.current !== null) {
+        window.cancelAnimationFrame(rafMoveRef.current)
+        rafMoveRef.current = null
+      }
+      lastPointerEventRef.current = null
+    }
   }, [gl.domElement, onMouseMove, mode, isShiftPressed, isMobile])
 
   useEffect(() => {
@@ -598,7 +645,7 @@ function Scene({
       raycasterRef.current.setFromCamera({ x, y }, camera)
 
       if (raycasterRef.current.ray.intersectPlane(groundPlaneRef.current, pointOnGroundRef.current)) {
-        console.log("[v0] Desktop click detected at:", pointOnGroundRef.current)
+        if (DEBUG_V0) console.log("[v0] Desktop click detected at:", pointOnGroundRef.current)
         onCanvasClick(pointOnGroundRef.current.clone())
       }
     }
@@ -610,7 +657,7 @@ function Scene({
         // Use the ghost brick position instead of raycasting again
         // This ensures brick lands exactly where the ghost is showing
         pointOnGroundRef.current.set(ghostPositionRef.current.x, 0, ghostPositionRef.current.z)
-        console.log("[v0] Mobile tap - placing at ghost position:", pointOnGroundRef.current)
+        if (DEBUG_V0) console.log("[v0] Mobile tap - placing at ghost position:", pointOnGroundRef.current)
         onCanvasClick(pointOnGroundRef.current.clone())
       }
 
@@ -676,12 +723,13 @@ function Scene({
         <BrickMesh
           key={i}
           brick={brick}
+          renderStyle={renderStyle}
           isEraseHover={mode === "erase" && hoverGroupId !== null && (brick.nftGroupId === hoverGroupId || brick.id === hoverGroupId)}
           onClick={() => !isShiftPressed && onBrickClick(brick.id)}
         />
       ))}
 
-      {ghostBrick && mode === "build" && <BrickMesh brick={ghostBrick} isGhost onClick={() => {}} />}
+      {ghostBrick && mode === "build" && <BrickMesh brick={ghostBrick} renderStyle={renderStyle} isGhost onClick={() => {}} />}
 
       {groundHighlight && mode === "build" && (
         <GroundHighlight position={groundHighlight.position} width={1} depth={1} isValid={groundHighlight.isValid} />
@@ -690,7 +738,7 @@ function Scene({
 {nftGhostBricks && mode === "build" && nftGhostBricks.length > 0 && (
     nftGhostBricks.length > INSTANCED_NFT_THRESHOLD 
       ? <InstancedNFTGhost bricks={nftGhostBricks} />
-      : nftGhostBricks.map((brick, i) => <BrickMesh key={i} brick={brick} isGhost onClick={() => {}} />)
+      : nftGhostBricks.map((brick, i) => <BrickMesh key={i} brick={brick} renderStyle={renderStyle} isGhost onClick={() => {}} />)
   )}
     </>
   )
@@ -744,37 +792,73 @@ export default function V0Blocks({
   const [depth, setDepth] = useState(3)
   const [density, setDensity] = useState(1)
   
-  // Set of minted brick keys loaded from Redis: e.g. "1x1-D1", "2x2-D27"
+  // Set of minted brick keys loaded from Redis: e.g. "1x1-D1", "2x2-D1"
   const [mintedBrickKeys, setMintedBrickKeys] = useState<Set<string>>(new Set())
+  const mintedBrickDimKeys = React.useMemo(() => {
+    const out = new Set<string>()
+    for (const spec of mintedBrickKeys) {
+      const m = String(spec).match(/^(\d+)x(\d+)-D(\d+)$/)
+      if (!m) continue
+      out.add(`${m[1]}x${m[2]}`)
+    }
+    return out
+  }, [mintedBrickKeys])
+  const [canEnforceMintChecks, setCanEnforceMintChecks] = useState(false)
   const onChainMintedBrickCacheRef = useRef<Map<string, boolean>>(new Map())
+  const mintedRefreshInFlightRef = useRef<Promise<Set<string>> | null>(null)
 
   const refreshMintedBrickKeys = useCallback(async (): Promise<Set<string>> => {
+    if (mintedRefreshInFlightRef.current) return mintedRefreshInFlightRef.current
+    const runner = (async (): Promise<Set<string>> => {
     try {
       const r = await fetch("/api/builds/check-minted")
+      if (!r.ok) {
+        throw new Error(`check-minted failed: ${r.status}`)
+      }
       const data = await r.json()
       const next = new Set<string>(Array.isArray(data.mintedBricks) ? data.mintedBricks : [])
       setMintedBrickKeys(next)
+      setCanEnforceMintChecks(true)
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(MINTED_BRICKS_CACHE_KEY, JSON.stringify(Array.from(next)))
+        } catch {}
+      }
       if (next.size > 0) {
-        console.log("[v0] Loaded minted bricks:", next.size)
+        if (DEBUG_V0) console.log("[v0] Loaded minted bricks:", next.size)
       }
       return next
     } catch {
+      // Never keep stale local minted-state when the source of truth cannot be fetched.
+      setMintedBrickKeys(new Set())
+      setCanEnforceMintChecks(false)
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.removeItem(MINTED_BRICKS_CACHE_KEY)
+        } catch {}
+      }
       return new Set<string>()
+    }
+    })()
+    mintedRefreshInFlightRef.current = runner
+    try {
+      return await runner
+    } finally {
+      mintedRefreshInFlightRef.current = null
     }
   }, [])
 
-  const checkBrickMintedOnChain = useCallback(async (brickKey: string, w: number, d: number, dens: number) => {
+  const checkBrickMintedOnChain = useCallback(async (w: number, d: number, dens: number) => {
     try {
-      const cached = onChainMintedBrickCacheRef.current.get(brickKey)
+      const specKey = normalizeBrickKey(w, d, dens)
+      const cached = onChainMintedBrickCacheRef.current.get(specKey)
       if (typeof cached === "boolean") return cached
       if (typeof window === "undefined") return false
       const eth = (window as unknown as { ethereum?: unknown }).ethereum
       if (!eth) return false
       const provider = new ethers.BrowserProvider(eth)
-      const contract = new ethers.Contract(CONTRACTS.BUILD_NFT, BUILD_NFT_ABI, provider)
-      const specKey = computeSpecKey(w, d, dens)
-      const minted = Boolean(await contract.brickSpecConsumed(specKey))
-      onChainMintedBrickCacheRef.current.set(brickKey, minted)
+      const minted = await isBrickSpecMintedOnChain(provider, Number(w), Number(d), Number(dens))
+      onChainMintedBrickCacheRef.current.set(specKey, minted)
       return minted
     } catch (err) {
       console.warn("[v0] brickSpecConsumed on-chain check failed:", err)
@@ -784,6 +868,19 @@ export default function V0Blocks({
 
   // Load minted brick keys from Redis on mount
   useEffect(() => {
+    // Warm from local cache first so build placement is instant.
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(MINTED_BRICKS_CACHE_KEY)
+        if (raw) {
+          const arr = JSON.parse(raw)
+          if (Array.isArray(arr) && arr.length > 0) {
+            setMintedBrickKeys(new Set(arr.filter((v) => typeof v === "string")))
+            setCanEnforceMintChecks(true)
+          }
+        }
+      } catch {}
+    }
     void refreshMintedBrickKeys()
   }, [refreshMintedBrickKeys])
   const [ghostBrick, setGhostBrick] = useState<Brick | null>(null)
@@ -806,9 +903,12 @@ export default function V0Blocks({
   const [isPlacing, setIsPlacing] = useState(false)
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(false)
   const [isBottomBarCollapsed, setIsBottomBarCollapsed] = useState(false)
+  const [renderStyle, setRenderStyle] = useState<RenderStyle>("classic")
 
   const ghostPositionRef = useRef<{ x: number; z: number } | null>(null)
   const lastNftGhostPositionRef = useRef<{ x: number; z: number } | null>(null) // Track last NFT position to avoid redundant updates
+  const lastGhostRenderRef = useRef<{ x: number; y: number; z: number; width: number; depth: number; color: string } | null>(null)
+  const lastGroundHighlightRef = useRef<{ x: number; z: number } | null>(null)
   const cameraRef = useRef<THREE.Camera | null>(null)
   
   // Reusable THREE objects for handleMouseMove to avoid GC pressure
@@ -875,20 +975,20 @@ export default function V0Blocks({
       
       const key = `${brick.width}x${brick.depth}`
       if (!counts[key]) {
-        // Use mintedBrickKeys (loaded from Redis) to check minted status
-        const brickKey = normalizeBrickKey(brick.width, brick.depth, density)
+        // Minted status follows on-chain uniqueness by brick dimensions.
+        const dimKey = normalizeDimKey(brick.width, brick.depth)
         counts[key] = { 
           width: brick.width, 
           depth: brick.depth, 
           count: 0,
-          minted: mintedBrickKeys.has(brickKey)
+          minted: mintedBrickDimKeys.has(dimKey)
         }
       }
       counts[key].count++
     }
     
     return Object.values(counts).sort((a, b) => b.count - a.count)
-  }, [bricks, mintedBrickKeys, density])
+  }, [bricks, mintedBrickDimKeys])
   
   // Notify parent when brick counts change
   useEffect(() => {
@@ -974,12 +1074,14 @@ export default function V0Blocks({
           ? GROUND_HEIGHT + BRICK_HEIGHT / 2 + LAYER_GAP
           : maxHeightBelow + BRICK_HEIGHT / 2 + LAYER_GAP
 
-      console.log("[v0] NFT minimum Y calculation:", {
-        clickX,
-        clickZ,
-        maxHeightBelow,
-        finalY,
-      })
+      if (DEBUG_V0) {
+        console.log("[v0] NFT minimum Y calculation:", {
+          clickX,
+          clickZ,
+          maxHeightBelow,
+          finalY,
+        })
+      }
 
       return finalY
     },
@@ -1020,15 +1122,17 @@ export default function V0Blocks({
           ? GROUND_HEIGHT + BRICK_HEIGHT / 2 + LAYER_GAP
           : maxHeightBelow + BRICK_HEIGHT / 2 + LAYER_GAP
 
-      console.log("[v0] Y calculation:", {
-        x,
-        z,
-        w,
-        d,
-        maxHeightBelow,
-        finalY,
-        layerCount: Math.round((finalY - GROUND_HEIGHT - BRICK_HEIGHT / 2) / (BRICK_HEIGHT + LAYER_GAP)) + 1,
-      })
+      if (DEBUG_V0) {
+        console.log("[v0] Y calculation:", {
+          x,
+          z,
+          w,
+          d,
+          maxHeightBelow,
+          finalY,
+          layerCount: Math.round((finalY - GROUND_HEIGHT - BRICK_HEIGHT / 2) / (BRICK_HEIGHT + LAYER_GAP)) + 1,
+        })
+      }
 
       return finalY
     },
@@ -1044,7 +1148,7 @@ export default function V0Blocks({
       const bounds = getNFTBounds(nftGeo)
       const nftY = calculateNFTMinimumY(nftGeo, clickX, clickZ)
 
-      console.log("[v0] Positioning NFT as rigid object:", { clickX, clickZ, nftY, bounds })
+      if (DEBUG_V0) console.log("[v0] Positioning NFT as rigid object:", { clickX, clickZ, nftY, bounds })
 
       return nftGeo.map((nftBrick) => {
         const brickWorldX = Math.round(clickX + nftBrick.position[0])
@@ -1115,7 +1219,7 @@ export default function V0Blocks({
       const overlapsY = newBottom < bTop && newTop > bBottom
 
       if (overlapsX && overlapsZ && overlapsY) {
-        console.log("[v0] Collision detected with brick:", brick)
+        if (DEBUG_V0) console.log("[v0] Collision detected with brick:", brick)
         return true
       }
     }
@@ -1145,7 +1249,7 @@ export default function V0Blocks({
       // Check if NFT is being placed
       if (nftGeometry && nftGeometry.length > 0 && nftInfo) {
         // Added check for nftInfo
-        console.log("[v0] Placing NFT with", nftGeometry.length, "bricks")
+        if (DEBUG_V0) console.log("[v0] Placing NFT with", nftGeometry.length, "bricks")
         setIsPlacing(true)
 
         const snappedX = Math.round(x)
@@ -1166,12 +1270,12 @@ export default function V0Blocks({
         // Filter out bricks that collide
         const validBricks = newBricksWithGroup.filter((brick) => !checkCollision(brick, bricks))
 
-        console.log("[v0] NFT bricks:", { total: newBricks.length, valid: validBricks.length })
+        if (DEBUG_V0) console.log("[v0] NFT bricks:", { total: newBricks.length, valid: validBricks.length })
 
         if (validBricks.length > 0) {
           addToHistory([...bricks, ...validBricks])
 
-          console.log("[v0] NFT placed, clearing selection")
+          if (DEBUG_V0) console.log("[v0] NFT placed, clearing selection")
           toast({ title: `Placed ${nftInfo.name}` })
           onNFTPlaced?.(
             nftInfo.tokenId,
@@ -1180,7 +1284,7 @@ export default function V0Blocks({
             validBricks.map((b) => b.id),
           )
         } else {
-          console.log("[v0] NFT placement blocked by collisions")
+          if (DEBUG_V0) console.log("[v0] NFT placement blocked by collisions")
           toast({ title: "NFT placement blocked by collision", variant: "destructive" })
         }
 
@@ -1192,24 +1296,28 @@ export default function V0Blocks({
       const hasGhostBrick = ghostBrick !== null
       const isGroundValid = groundHighlight?.isValid === true
 
-      console.log("[v0] Click check:", {
-        hasNftGeometry: !!nftGeometry,
-        mode,
-        hasGhostBrick,
-        isGroundValid,
-      })
+      if (DEBUG_V0) {
+        console.log("[v0] Click check:", {
+          hasNftGeometry: !!nftGeometry,
+          mode,
+          hasGhostBrick,
+          isGroundValid,
+        })
+      }
 
       if (mode !== "build" || !ghostBrick || !groundHighlight?.isValid) return
 
       const placementX = ghostPositionRef.current?.x ?? ghostBrick.position[0]
       const placementZ = ghostPositionRef.current?.z ?? ghostBrick.position[2]
 
-      console.log("[v0] Placing regular brick at:", {
-        x: placementX,
-        z: placementZ,
-        width: ghostBrick.width,
-        depth: ghostBrick.depth,
-      })
+      if (DEBUG_V0) {
+        console.log("[v0] Placing regular brick at:", {
+          x: placementX,
+          z: placementZ,
+          width: ghostBrick.width,
+          depth: ghostBrick.depth,
+        })
+      }
 
       // Use actual placement position for Y calculation (includes even-offset)
       const yPos = calculateYPosition(placementX, placementZ, ghostBrick.width, ghostBrick.depth)
@@ -1223,33 +1331,33 @@ export default function V0Blocks({
       }
 
       if (!checkCollision(newBrick, bricks)) {
-        // Check if this brick size+density is minted (via Redis-cached set, normalized so 1x2 == 2x1)
+        // Check if this brick footprint is minted (on-chain uniqueness is dimension-driven).
         const brickKey = normalizeBrickKey(ghostBrick.width, ghostBrick.depth, density)
+        const dimKey = normalizeDimKey(ghostBrick.width, ghostBrick.depth)
         
-        if (mintedBrickKeys.has(brickKey)) {
+        if (mintedBrickDimKeys.has(dimKey)) {
           // Minted - allow placement
           addToHistory([...bricks, newBrick])
         } else {
-          const latestMinted = await refreshMintedBrickKeys()
-          if (latestMinted.has(brickKey)) {
+          // Keep build interaction instant until minted index is ready.
+          if (!canEnforceMintChecks) {
             addToHistory([...bricks, newBrick])
+            void refreshMintedBrickKeys()
             return
           }
-          const onChainMinted = await checkBrickMintedOnChain(
-            brickKey,
-            ghostBrick.width,
-            ghostBrick.depth,
-            density,
-          )
-          if (onChainMinted) {
+          // Do not block placement UX on network checks. Refresh in background and
+          // let next click benefit from refreshed cache.
+          void refreshMintedBrickKeys()
+          void checkBrickMintedOnChain(ghostBrick.width, ghostBrick.depth, density).then((onChainMinted) => {
+            if (!onChainMinted) return
             setMintedBrickKeys((prev) => {
+              if (prev.has(brickKey)) return prev
               const next = new Set(prev)
               next.add(brickKey)
               return next
             })
-            addToHistory([...bricks, newBrick])
-            return
-          }
+          })
+
           // Not minted - show mint modal
           const brickNFT = getBrickByDimensions(ghostBrick.width, ghostBrick.depth, density)
           if (brickNFT) {
@@ -1276,7 +1384,7 @@ export default function V0Blocks({
       nftInfo,
       isPlacing,
       density,
-      mintedBrickKeys,
+      mintedBrickDimKeys,
       addToHistory,
       checkCollision,
       calculateYPosition,
@@ -1285,6 +1393,7 @@ export default function V0Blocks({
       toast,
       refreshMintedBrickKeys,
       checkBrickMintedOnChain,
+      canEnforceMintChecks,
     ],
   )
 
@@ -1350,12 +1459,14 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
     const nftGhostBrickList = positionNFTBricks(nftGeometry, snappedX, snappedZ)
     setNftGhostBricks(nftGhostBrickList)
   }
-  setGhostBrick(null)
-  setGroundHighlight({ position: [snappedX, 0, snappedZ], isValid: true })
+          if (ghostBrick !== null) setGhostBrick(null)
+          if (!groundHighlight || groundHighlight.position?.[0] !== snappedX || groundHighlight.position?.[2] !== snappedZ) {
+            setGroundHighlight({ position: [snappedX, 0, snappedZ], isValid: true })
+          }
         } else {
           setNftGhostBricks(null)
-          setGhostBrick(null)
-          setGroundHighlight(null)
+          if (ghostBrick !== null) setGhostBrick(null)
+          if (groundHighlight !== null) setGroundHighlight(null)
           ghostPositionRef.current = null
         }
         return
@@ -1406,9 +1517,10 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
         
         // If brick is part of an NFT group, highlight the whole group, otherwise just the brick
         if (closestBrick) {
-          setHoverGroupId(closestBrick.nftGroupId || closestBrick.id)
+          const nextId = closestBrick.nftGroupId || closestBrick.id
+          setHoverGroupId((prev) => (prev === nextId ? prev : nextId))
         } else {
-          setHoverGroupId(null)
+          setHoverGroupId((prev) => (prev === null ? prev : null))
         }
         return
       }
@@ -1440,21 +1552,53 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
         // Use finalX/finalZ for Y calculation to match actual brick position
         const yPos = calculateYPosition(finalX, finalZ, width, depth)
 
-        setGhostBrick({
-          id: "ghost",
-          color: selectedColor,
-          position: [finalX, yPos, finalZ],
-          width,
-          depth,
-        })
-        setGroundHighlight({ position: [snappedX, 0, snappedZ], isValid: true })
+        const nextGhost = { x: finalX, y: yPos, z: finalZ, width, depth, color: selectedColor }
+        const prevGhost = lastGhostRenderRef.current
+        if (
+          !prevGhost ||
+          prevGhost.x !== nextGhost.x ||
+          prevGhost.y !== nextGhost.y ||
+          prevGhost.z !== nextGhost.z ||
+          prevGhost.width !== nextGhost.width ||
+          prevGhost.depth !== nextGhost.depth ||
+          prevGhost.color !== nextGhost.color
+        ) {
+          lastGhostRenderRef.current = nextGhost
+          setGhostBrick({
+            id: "ghost",
+            color: selectedColor,
+            position: [finalX, yPos, finalZ],
+            width,
+            depth,
+          })
+        }
+        const prevGround = lastGroundHighlightRef.current
+        if (!prevGround || prevGround.x !== snappedX || prevGround.z !== snappedZ) {
+          lastGroundHighlightRef.current = { x: snappedX, z: snappedZ }
+          setGroundHighlight({ position: [snappedX, 0, snappedZ], isValid: true })
+        }
       } else {
-        setGhostBrick(null)
-        setGroundHighlight(null)
+        if (ghostBrick !== null) setGhostBrick(null)
+        if (groundHighlight !== null) setGroundHighlight(null)
         ghostPositionRef.current = null
+        lastGhostRenderRef.current = null
+        lastGroundHighlightRef.current = null
       }
     },
-    [isDragging, nftGeometry, nftInfo, mode, width, depth, selectedColor, calculateYPosition, positionNFTBricks, bricks],
+    [
+      isDragging,
+      nftGeometry,
+      nftInfo,
+      mode,
+      width,
+      depth,
+      selectedColor,
+      calculateYPosition,
+      positionNFTBricks,
+      bricks,
+      ghostBrick,
+      groundHighlight,
+    ],
   )
 
   const handleSave = async () => {
@@ -1513,7 +1657,7 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
 
   const handleClear = () => {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("ethblox_autosave")
+      localStorage.removeItem("buidl_autosave")
     }
     addToHistory([])
     setShowClearDialog(false)
@@ -1582,6 +1726,7 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
       totalBloxMass: calculateTotalBlox(bricks),
       uniqueColors: new Set(bricks.map((b) => b.color)).size,
       composition: nftComposition,
+      density,
       metadata: {
         buildWidth: baseWidth,
         buildDepth: baseDepth,
@@ -1592,7 +1737,7 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
       account,
       timestamp: Date.now(),
     }
-    sessionStorage.setItem("ethblox_mint_debug", JSON.stringify(mintDebugData))
+    sessionStorage.setItem("buidl_mint_debug", JSON.stringify(mintDebugData))
     router.push(`/mint-debug?density=${density}`)
   }
 
@@ -1710,9 +1855,9 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
   const hasLoadedInitialBuild = useRef(false)
   
   useEffect(() => {
-    const initialLoadId = localStorage.getItem("ethblox_load_build")
+    const initialLoadId = localStorage.getItem("buidl_load_build")
     if (initialLoadId) {
-      localStorage.removeItem("ethblox_load_build")
+      localStorage.removeItem("buidl_load_build")
       loadFromGallery(initialLoadId)
     } else if (initialLoadedBuild && initialLoadedBuild.bricks && !hasLoadedInitialBuild.current) {
       hasLoadedInitialBuild.current = true
@@ -1747,7 +1892,7 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
     const isClient = typeof window !== "undefined"
     if (isClient) {
       localStorage.setItem(
-        "ethblox_autosave",
+        "buidl_autosave",
         JSON.stringify({ bricks, width, depth, colorIndex, theme }),
       )
     }
@@ -1805,6 +1950,7 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
           isMobile={isMobile} // Pass isMobile to Scene
           ghostPositionRef={ghostPositionRef} // Pass ghostPositionRef to Scene
           hoverGroupIdFromScene={hoverGroupIdFromScene}
+          renderStyle={renderStyle}
         />
       </Canvas>
 
@@ -1877,6 +2023,16 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+              <div className="w-px h-5 bg-zinc-600" />
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setRenderStyle((v) => (v === "classic" ? "studless" : "classic"))}
+                className={`font-mono text-[10px] h-8 px-2 ${renderStyle === "studless" ? "text-[#CDFD3E]" : "text-zinc-300"}`}
+                title="Render style toggle (visual only)"
+              >
+                {renderStyle === "studless" ? "Studless Cubes" : "Classic Studs"}
+              </Button>
               {/* Parts counter rendered by V0BlocksV2 */}
             </>
           ) : (

@@ -27,7 +27,7 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
   }
 
   return (
-    <div className="min-h-screen bg-[hsl(var(--ethblox-bg))]">
+    <div className="min-h-screen bg-[hsl(var(--buidl-bg))]">
       <SiteHeader />
 
       <main className="pt-24 pb-16">
@@ -35,7 +35,7 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
           <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-12">
             <DocsNav />
 
-            <article className="max-w-3xl prose prose-invert prose-headings:font-heading prose-headings:text-[hsl(var(--ethblox-accent-yellow))] prose-p:text-[hsl(var(--ethblox-text-secondary))] prose-a:text-[hsl(var(--ethblox-accent-cyan))] prose-a:no-underline hover:prose-a:underline prose-code:text-[hsl(var(--ethblox-accent-green))] prose-pre:bg-[hsl(var(--ethblox-surface))] prose-pre:border prose-pre:border-[hsl(var(--ethblox-border))]">
+            <article className="max-w-3xl prose prose-invert prose-headings:font-heading prose-headings:text-[hsl(var(--buidl-accent-yellow))] prose-p:text-[hsl(var(--buidl-text-secondary))] prose-a:text-[hsl(var(--buidl-accent-cyan))] prose-a:no-underline hover:prose-a:underline prose-code:text-[hsl(var(--buidl-accent-green))] prose-pre:bg-[hsl(var(--buidl-surface))] prose-pre:border prose-pre:border-[hsl(var(--buidl-border))]">
               {content}
             </article>
           </div>

@@ -27,6 +27,8 @@ const presets = {
     NEXT_PUBLIC_LICENSE_NFT_ADDRESS: "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
     NEXT_PUBLIC_DISTRIBUTOR_ADDRESS: "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512",
     NEXT_PUBLIC_BLOX_ADDRESS: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    NEXT_PUBLIC_ACCESS_PASS_ADDRESS: "0x0000000000000000000000000000000000000000",
+    NEXT_PUBLIC_REQUIRE_ACCESS_PASS: "0",
   },
   sepolia: {
     NEXT_PUBLIC_ENABLE_NETWORK_SWITCHER: "true",
@@ -41,6 +43,8 @@ const presets = {
     NEXT_PUBLIC_LICENSE_NFT_ADDRESS: "0x8573c37452982de0d23cbd3c9e98c88853bd4e80",
     NEXT_PUBLIC_DISTRIBUTOR_ADDRESS: "0x2c96057a8774153282592ca5afbf4dd8178954cc",
     NEXT_PUBLIC_BLOX_ADDRESS: "0x6578d53995FEB0e486135b893B8bC16AE1a5Ec52",
+    NEXT_PUBLIC_ACCESS_PASS_ADDRESS: "0x0000000000000000000000000000000000000000",
+    NEXT_PUBLIC_REQUIRE_ACCESS_PASS: "0",
   },
   "sepolia-test": {
     NEXT_PUBLIC_ENABLE_NETWORK_SWITCHER: "true",
@@ -50,17 +54,19 @@ const presets = {
     NEXT_PUBLIC_RPC_URL: "https://sepolia.base.org",
     BASE_SEPOLIA_RPC_URL: "https://sepolia.base.org",
     NEXT_PUBLIC_BLOCK_EXPLORER_URL: "https://sepolia.basescan.org",
-    NEXT_PUBLIC_BUILDNFT_ADDRESS: "0x65d577e20dfb8c79b4c7a4a76b64456e3c552a7e",
-    NEXT_PUBLIC_LICENSE_REGISTRY_ADDRESS: "0xba629bdc8e234df00e794ab3d37cf94a2a519a87",
-    NEXT_PUBLIC_LICENSE_NFT_ADDRESS: "0xceb1ae32c4d361cad286bc70f36d6c6764098204",
-    NEXT_PUBLIC_DISTRIBUTOR_ADDRESS: "0x97975da49915291b6cb3bbd6f9041065b5342198",
+    NEXT_PUBLIC_BUILDNFT_ADDRESS: "0xBFb4DF18dd2b1f25a627028682F3984a5F5813aa",
+    NEXT_PUBLIC_LICENSE_REGISTRY_ADDRESS: "0xD3F082D3d00522094411C84FDf110703FE7958D6",
+    NEXT_PUBLIC_LICENSE_NFT_ADDRESS: "0x76d9269f1FC97F7f515B5488210921aFDcEBfd90",
+    NEXT_PUBLIC_DISTRIBUTOR_ADDRESS: "0x9136f20faDFCf0CB8B9E225D1d410e757E5FC032",
     NEXT_PUBLIC_BLOX_ADDRESS: "0x6578d53995FEB0e486135b893B8bC16AE1a5Ec52",
+    NEXT_PUBLIC_ACCESS_PASS_ADDRESS: "0x9184f498f781fe7e95a32d1145cdb5e38a92d1c7",
+    NEXT_PUBLIC_REQUIRE_ACCESS_PASS: "0",
   },
 };
 
 const anvilManifestPath = path.resolve(
   process.cwd(),
-  "../ethblox-contracts/deployments/anvil.contracts.json",
+  "../buidl-contracts/deployments/anvil.contracts.json",
 );
 
 function loadAnvilManifest() {
@@ -99,9 +105,10 @@ for (const [key, value] of Object.entries(map)) {
   else next.push(line);
 }
 
-if (mode === "anvil") {
+{
   const buildAddress = map.NEXT_PUBLIC_BUILDNFT_ADDRESS;
-  const redisPrefix = `ethblox:v1:anvil-local:${buildAddress}:`;
+  const networkName = map.NEXT_PUBLIC_NETWORK_NAME || mode;
+  const redisPrefix = `buidl:v1:${networkName}:${buildAddress}:`;
   const idx = next.findIndex((line) => line.startsWith("REDIS_KEY_PREFIX="));
   if (idx >= 0) next[idx] = `REDIS_KEY_PREFIX=${redisPrefix}`;
   else next.push(`REDIS_KEY_PREFIX=${redisPrefix}`);

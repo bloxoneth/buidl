@@ -1,4 +1,4 @@
-// Brick NFT data - core primitive for ETHBLOX
+// Brick NFT data - core primitive for BUIDL
 // Each brick represents a single-layer rectangle (up to 10x10)
 // Fresh start - no dummy data, bricks are minted on-chain
 
@@ -6,7 +6,7 @@ export interface BrickNFT {
   id: string
   width: number
   depth: number
-  density: 1 | 8 | 27 | 64 | 125 // Cube densities: 1^3, 2^3, 3^3, 4^3, 5^3
+  density: number // Always 1 in v2.0 (FIXED_DENSITY on-chain)
   mass: number // width * depth * density
   geometryHash: string
   minted: boolean
@@ -18,46 +18,44 @@ export interface BrickNFT {
 }
 
 // Calculate mass for a brick
-export function calculateMass(width: number, depth: number, density: number): number {
+export function calculateMass(width: number, depth: number, density: number = 1): number {
   return width * depth * density
 }
 
 // Generate geometry hash (deterministic based on dimensions)
-export function generateGeometryHash(width: number, depth: number, density: number): string {
+export function generateGeometryHash(width: number, depth: number, density: number = 1): string {
   return `brick-${width}x${depth}-d${density}`
 }
 
-// All possible brick sizes (1x1 to 10x10) with various densities
-// Starting fresh - all bricks are unminted until minted on-chain
-export const BRICK_DENSITIES = [1, 8, 27, 64, 125] as const
+// v2.0: All bricks use density 1 (FIXED_DENSITY on-chain)
+export const BRICK_DENSITIES = [1] as const
 
 // Generate all possible bricks - all unminted by default
 // Minting status will be fetched from the blockchain
 function generateAllBricks(): BrickNFT[] {
   const bricks: BrickNFT[] = []
-  
-  // Generate all possible bricks (1x1 to 10x10, all densities)
+
+  // Generate all possible bricks (1x1 to 10x10, density=1)
   // All start unminted - real minting status comes from blockchain
   for (let width = 1; width <= 10; width++) {
     for (let depth = width; depth <= 10; depth++) { // depth >= width to avoid duplicates
-      for (const density of BRICK_DENSITIES) {
-        const key = `${width}x${depth}-d${density}`
-        const mass = calculateMass(width, depth, density)
-        
-        bricks.push({
-          id: `brick-${key}`,
-          width,
-          depth,
-          density: density as 1 | 8 | 27 | 64 | 125,
-          mass,
-          geometryHash: generateGeometryHash(width, depth, density),
-          minted: false, // All unminted - blockchain is source of truth
-          usageCount: 0,
-        })
-      }
+      const density = 1
+      const key = `${width}x${depth}-D${density}`
+      const mass = calculateMass(width, depth, density)
+
+      bricks.push({
+        id: `brick-${key}`,
+        width,
+        depth,
+        density,
+        mass,
+        geometryHash: generateGeometryHash(width, depth, density),
+        minted: false, // All unminted - blockchain is source of truth
+        usageCount: 0,
+      })
     }
   }
-  
+
   return bricks
 }
 
@@ -107,7 +105,7 @@ export function formatBrickName(brick: BrickNFT): string {
 }
 
 // Normalize a brick key so 1x2-D1 and 2x1-D1 produce the same string
-export function normalizeBrickKey(w: number, d: number, density: number): string {
+export function normalizeBrickKey(w: number, d: number, density: number = 1): string {
   const minDim = Math.min(w, d)
   const maxDim = Math.max(w, d)
   return `${minDim}x${maxDim}-D${density}`

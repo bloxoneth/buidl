@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useEffect } from "react"
+import { useRef, useEffect, useMemo } from "react"
 import { Canvas, useThree } from "@react-three/fiber"
 import { OrbitControls } from "@react-three/drei"
 import type { Brick } from "@/lib/types"
@@ -114,6 +114,13 @@ export function MintPreviewCanvas({
   screenshotDataUrl,
 }: MintPreviewCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const autoCaptureKey = useMemo(() => {
+    const brickKey = bricks
+      .map((b) => `${b.id}:${b.width}x${b.depth}@${b.position.join(",")}:${b.color}`)
+      .join("|")
+    return `${baseWidth}x${baseDepth}:${brickKey}`
+  }, [bricks, baseWidth, baseDepth])
+  const lastAutoCaptureKey = useRef<string>("")
 
   const handleCaptureScreenshot = () => {
     if (canvasRef.current) {
@@ -126,10 +133,26 @@ export function MintPreviewCanvas({
     if (screenshotDataUrl) {
       const link = document.createElement("a")
       link.href = screenshotDataUrl
-      link.download = `ethblox-build-${Date.now()}.png`
+      link.download = `buidl-build-${Date.now()}.png`
       link.click()
     }
   }
+
+  useEffect(() => {
+    if (!canvasRef.current) return
+    if (lastAutoCaptureKey.current === autoCaptureKey) return
+    const timer = setTimeout(() => {
+      if (!canvasRef.current) return
+      try {
+        const dataUrl = canvasRef.current.toDataURL("image/png")
+        onScreenshotCaptured(dataUrl)
+        lastAutoCaptureKey.current = autoCaptureKey
+      } catch {
+        // User can still capture manually.
+      }
+    }, 600)
+    return () => clearTimeout(timer)
+  }, [autoCaptureKey, onScreenshotCaptured])
 
   return (
     <div className="space-y-3">

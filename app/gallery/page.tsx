@@ -5,8 +5,8 @@ import GalleryClient from "@/components/gallery/GalleryClient"
 import { TokenBackfillButton } from "@/components/admin/TokenBackfillButton"
 
 export const metadata: Metadata = {
-  title: "Gallery | BASEBLOX",
-  description: "Explore public BUILDS from the BASEBLOX community",
+  title: "Gallery | BUIDL",
+  description: "Explore public BUILDS from the BUIDL community",
 }
 
 export default function GalleryPage() {

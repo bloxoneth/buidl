@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react"
 import { ethers } from "ethers"
 import { useMetaMask } from "@/contexts/metamask-context"
-import { CONTRACTS, BUILD_KIND, getBuildState, burnBuildNFT, canBurn } from "@/lib/contracts/ethblox-contracts"
+import { CONTRACTS, BUILD_KIND, getBuildState, burnBuildNFT, canBurn } from "@/lib/contracts/buidl-contracts"
 
 export type BurnStep = "idle" | "checking" | "burning" | "success" | "error"
 

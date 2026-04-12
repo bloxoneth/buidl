@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useEffect, useCallback, useState } from "react"
+import { useRef, useEffect, useCallback, useState, useMemo } from "react"
 import { Canvas, useThree, useFrame } from "@react-three/fiber"
 import * as THREE from "three"
 import type { Brick } from "@/lib/types"
@@ -167,6 +167,14 @@ export function StandardBuildCapture({
   const [isCapturing, setIsCapturing] = useState(false)
   const [sceneReady, setSceneReady] = useState(false)
   const autoCaptureTriggered = useRef(false)
+  const autoCaptureAttempts = useRef(0)
+  const bricksSignature = useMemo(
+    () =>
+      bricks
+        .map((b) => `${b.id || ""}:${b.width}x${b.depth}@${b.position.join(",")}:${b.color}`)
+        .join("|"),
+    [bricks],
+  )
 
   const captureScreenshot = useCallback(() => {
     const renderer = glRef.current
@@ -181,7 +189,7 @@ export function StandardBuildCapture({
     const isThreeCamera = (v: unknown): v is THREE.Camera =>
       !!v && typeof v === "object" && (v as any).isCamera === true
 
-    if (!isThreeCamera(cam)) {
+    if (!isThreeCamera(cam) || !cam) {
       console.warn("captureScreenshot skipped: invalid camera", cam)
       setIsCapturing(false)
       return null
@@ -190,6 +198,10 @@ export function StandardBuildCapture({
     renderer.render(scene, cam)
 
     const dataUrl = renderer.domElement.toDataURL("image/png")
+    if (!dataUrl || dataUrl.length < 100) {
+      setIsCapturing(false)
+      return null
+    }
     setScreenshotUrl(dataUrl)
     setIsCapturing(false)
 
@@ -199,14 +211,36 @@ export function StandardBuildCapture({
 
   // Auto-capture when scene is ready
   useEffect(() => {
-    if (autoCapture && sceneReady && !autoCaptureTriggered.current && glRef.current) {
-      autoCaptureTriggered.current = true
-      // Small delay to ensure render is complete
-      setTimeout(() => {
-        captureScreenshot()
-      }, 100)
+    if (!autoCapture || !sceneReady || autoCaptureTriggered.current || !glRef.current) return
+
+    let cancelled = false
+    const tryCapture = () => {
+      if (cancelled) return
+      const captured = captureScreenshot()
+      if (captured) {
+        autoCaptureTriggered.current = true
+        return
+      }
+      autoCaptureAttempts.current += 1
+      if (autoCaptureAttempts.current < 12) {
+        setTimeout(tryCapture, 180)
+      }
+    }
+
+    // Small delay to ensure first complete frame
+    const timer = setTimeout(tryCapture, 120)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
     }
   }, [autoCapture, sceneReady, captureScreenshot])
+
+  // Reset capture trigger for a new geometry/view state.
+  useEffect(() => {
+    autoCaptureTriggered.current = false
+    autoCaptureAttempts.current = 0
+    setScreenshotUrl(null)
+  }, [buildId, buildName, bricksSignature])
 
   const handleSceneReady = useCallback(() => {
     setSceneReady(true)
@@ -216,14 +250,14 @@ export function StandardBuildCapture({
     if (!screenshotUrl) return
     const link = document.createElement("a")
     link.href = screenshotUrl
-    link.download = `${buildName || buildId || "ethblox-build"}.png`
+    link.download = `${buildName || buildId || "buidl-build"}.png`
     link.click()
   }, [screenshotUrl, buildName, buildId])
 
   return (
-    <div className={`space-y-3 ${className}`}>
+    <div className={`space-y-3 ${className}`} data-build-capture-root="1">
       {/* Canvas */}
-      <div className="relative aspect-square rounded-lg overflow-hidden border border-[hsl(var(--ethblox-border))]">
+      <div className="relative aspect-square rounded-lg overflow-hidden border border-[hsl(var(--buidl-border))]">
         <Canvas
           ref={canvasRef}
           shadows
@@ -246,8 +280,8 @@ export function StandardBuildCapture({
 
         {/* Loading indicator */}
         {!sceneReady && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--ethblox-bg))]">
-            <Loader2 className="h-8 w-8 animate-spin text-[hsl(var(--ethblox-text-tertiary))]" />
+          <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--buidl-bg))]">
+            <Loader2 className="h-8 w-8 animate-spin text-[hsl(var(--buidl-text-tertiary))]" />
           </div>
         )}
 
@@ -258,7 +292,7 @@ export function StandardBuildCapture({
               onClick={captureScreenshot}
               size="sm"
               disabled={isCapturing}
-              className="bg-[hsl(var(--ethblox-surface))] hover:bg-[hsl(var(--ethblox-surface-elevated))] text-[hsl(var(--ethblox-text-primary))] border border-[hsl(var(--ethblox-border))]"
+              className="bg-[hsl(var(--buidl-surface))] hover:bg-[hsl(var(--buidl-surface-elevated))] text-[hsl(var(--buidl-text-primary))] border border-[hsl(var(--buidl-border))]"
             >
               {isCapturing ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-1" />
@@ -275,14 +309,14 @@ export function StandardBuildCapture({
       {screenshotUrl && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-[hsl(var(--ethblox-text-tertiary))]">
+            <span className="text-xs text-[hsl(var(--buidl-text-tertiary))]">
               Captured Image (IPFS Ready)
             </span>
             <Button
               onClick={downloadScreenshot}
               size="sm"
               variant="outline"
-              className="h-7 text-xs border-[hsl(var(--ethblox-green))] text-[hsl(var(--ethblox-green))] bg-transparent hover:bg-[hsl(var(--ethblox-green)/0.1)]"
+              className="h-7 text-xs border-[hsl(var(--buidl-green))] text-[hsl(var(--buidl-green))] bg-transparent hover:bg-[hsl(var(--buidl-green)/0.1)]"
             >
               <Download className="h-3 w-3 mr-1" />
               Download PNG
@@ -291,7 +325,7 @@ export function StandardBuildCapture({
           <img
             src={screenshotUrl || "/placeholder.svg"}
             alt="Build preview"
-            className="w-full rounded-lg border border-[hsl(var(--ethblox-border))]"
+            className="w-full rounded-lg border border-[hsl(var(--buidl-border))]"
           />
         </div>
       )}
