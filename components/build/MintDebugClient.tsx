@@ -48,6 +48,7 @@ import {
   type MintParams,
 } from "@/lib/contracts/buidl-contracts"
 import { generateBuildHash } from "@/lib/build-hash"
+import { encodeBricks } from "@/lib/geometry-encoder"
 import { normalizeBrickKey } from "@/data/bricks"
 import type { Brick } from "@/lib/types"
 import { StandardBuildCapture } from "./StandardBuildCapture"
@@ -885,10 +886,25 @@ export function MintDebugClient() {
       componentCounts = validComponents.map(([, data]) => BigInt(data.count))
     }
 
+    // Encode voxel geometry — normalize positions to origin
+    const allBricks = debugData.bricks
+    const minX = Math.min(...allBricks.map(b => Math.round(b.position[0])))
+    const minY = Math.min(...allBricks.map(b => Math.round(b.position[1])))
+    const minZ = Math.min(...allBricks.map(b => Math.round(b.position[2])))
+    const normalizedBricks = allBricks.map(b => ({
+      ...b,
+      position: [
+        Math.round(b.position[0]) - minX,
+        Math.round(b.position[1]) - minY,
+        Math.round(b.position[2]) - minZ,
+      ] as [number, number, number],
+    }))
+    const encoded = encodeBricks(normalizedBricks)
+
     return {
       geometryHash: generatedHash,
       mass: debugData.totalBloxMass,
-      geometryData: new Uint8Array(0),
+      geometryData: encoded.bytes,
       componentBuildIds: componentIds,
       componentCounts: componentCounts,
       manifest: [],

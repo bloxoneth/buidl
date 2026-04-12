@@ -25,6 +25,7 @@ import {
   addMintedHash,
 } from "@/lib/contracts/buidl-contracts"
 import { FEATURES } from "@/lib/feature-flags"
+import { encodeBricks } from "@/lib/geometry-encoder"
 
 interface MintBuildModalProps {
   open: boolean
@@ -436,12 +437,28 @@ export function MintBuildModal({
       const nextId = await getNextTokenId(provider)
       setTokenId(nextId)
 
+      // Encode voxel geometry for on-chain storage
+      // Normalize positions to start from (0,0,0)
+      const minX = Math.min(...bricks.map(b => Math.round(b.position[0])))
+      const minY = Math.min(...bricks.map(b => Math.round(b.position[1])))
+      const minZ = Math.min(...bricks.map(b => Math.round(b.position[2])))
+      const normalizedBricks = bricks.map(b => ({
+        ...b,
+        position: [
+          Math.round(b.position[0]) - minX,
+          Math.round(b.position[1]) - minY,
+          Math.round(b.position[2]) - minZ,
+        ] as [number, number, number],
+      }))
+      const encoded = encodeBricks(normalizedBricks)
+      console.log("[v0] Encoded geometry:", encoded.bytes.length, "bytes, bbox:", encoded.boundingBox)
+
       // Single brick → KIND_BRICK with width/depth; multi-brick build → KIND_BUILD with 0/0
       const isBrick = bricks.length === 1
       const mintTx = await mintBuildNFTWithParams(provider, {
         geometryHash: buildHash,
         mass: totalBloxMass,
-        geometryData: new Uint8Array(0),
+        geometryData: encoded.bytes,
         componentBuildIds,
         componentCounts,
         manifest: [],
