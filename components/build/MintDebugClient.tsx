@@ -893,8 +893,8 @@ export function MintDebugClient() {
       componentCounts: componentCounts,
       manifest: [],
       kind,
-      width: kind === BUILD_KIND.BRICK ? brickWidth : debugData.baseWidth,
-      depth: kind === BUILD_KIND.BRICK ? brickDepth : debugData.baseDepth,
+      width: kind === BUILD_KIND.BRICK ? brickWidth : 0,
+      depth: kind === BUILD_KIND.BRICK ? brickDepth : 0,
       density: mintDensity,
     }
   }

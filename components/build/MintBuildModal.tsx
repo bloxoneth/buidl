@@ -436,6 +436,8 @@ export function MintBuildModal({
       const nextId = await getNextTokenId(provider)
       setTokenId(nextId)
 
+      // Single brick → KIND_BRICK with width/depth; multi-brick build → KIND_BUILD with 0/0
+      const isBrick = bricks.length === 1
       const mintTx = await mintBuildNFTWithParams(provider, {
         geometryHash: buildHash,
         mass: totalBloxMass,
@@ -443,9 +445,9 @@ export function MintBuildModal({
         componentBuildIds,
         componentCounts,
         manifest: [],
-        kind: BUILD_KIND.BUILD,
-        width: baseWidth,
-        depth: baseDepth,
+        kind: isBrick ? BUILD_KIND.BRICK : BUILD_KIND.BUILD,
+        width: isBrick ? baseWidth : 0,
+        depth: isBrick ? baseDepth : 0,
         density: 1,
       })
       console.log("[v0] Mint tx sent:", mintTx.hash)
