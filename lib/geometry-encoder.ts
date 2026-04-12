@@ -1,7 +1,3 @@
-if (typeof window === 'undefined') {
-  throw new Error('geometry-encoder must only run in browser context')
-}
-
 import { ethers } from 'ethers'
 import type { Brick } from './types'
 import type { ColourIndex } from './palette'
