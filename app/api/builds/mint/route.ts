@@ -232,83 +232,13 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Component model for kind=0:
-      // - 1x1 is primitive (no components)
-      // - Any larger rectangle can be composed from any brick components
-      //   as long as total component area matches width*depth and density matches.
-      if (area === 1) {
+      // V3: All bricks are primitives — no component requirement.
+      // Composition is only validated on-chain for builds (kind>0).
+      // Accept whatever components were sent (may be empty for bricks).
+      if (!canonicalComponentBuildIds.length) {
         canonicalComponentBuildIds = []
         canonicalComponentCounts = []
         canonicalComposition = {}
-      } else {
-        const incomingIds = (Array.isArray(body.componentBuildIds) ? body.componentBuildIds : []).map(String)
-        const incomingCounts = (Array.isArray(body.componentCounts) ? body.componentCounts : []).map((n) => Number(n))
-        if (incomingIds.length === 0 || incomingIds.length !== incomingCounts.length) {
-          return NextResponse.json(
-            {
-              error: "Invalid brick components for kind=0 rectangle. Provide componentBuildIds/componentCounts.",
-            },
-            { status: 400 },
-          )
-        }
-
-        // Aggregate + sort component rows (defensive canonicalization).
-        const agg = new Map<string, number>()
-        for (let i = 0; i < incomingIds.length; i++) {
-          const id = incomingIds[i]
-          const count = Number(incomingCounts[i])
-          if (!/^\d+$/.test(id) || Number(id) <= 0 || !Number.isFinite(count) || count <= 0) {
-            return NextResponse.json({ error: "Invalid component ids/counts for brick mint." }, { status: 400 })
-          }
-          agg.set(id, (agg.get(id) ?? 0) + count)
-        }
-        const sorted = [...agg.entries()].sort((a, b) => Number(a[0]) - Number(b[0]))
-
-        // Validate against chain truth: each component must be a brick with matching density.
-        const provider = new ethers.JsonRpcProvider(RPC_URL)
-        const contract = new ethers.Contract(CONTRACTS.BUILD_NFT, CHAIN_READ_ABI, provider)
-        let totalAreaFromComponents = 0
-        const compositionObj: Record<string, { count: number; name: string }> = {}
-
-        for (const [componentId, count] of sorted) {
-          const cid = BigInt(componentId)
-          const exists = Boolean(await contract.exists(cid))
-          if (!exists) {
-            return NextResponse.json({ error: `Brick component ${componentId} does not exist on-chain.` }, { status: 400 })
-          }
-          const ck = Number(await contract.kindOf(cid))
-          if (ck !== 0) {
-            return NextResponse.json({ error: `Component ${componentId} is not kind=0 brick.` }, { status: 400 })
-          }
-          const [cw, cd, cden] = await contract.brickSpecOf(cid)
-          if (Number(cden) !== Number(density)) {
-            return NextResponse.json(
-              { error: `Component ${componentId} density mismatch (expected ${density}, got ${Number(cden)}).` },
-              { status: 400 },
-            )
-          }
-          const compArea = Number(cw) * Number(cd)
-          totalAreaFromComponents += compArea * count
-          compositionObj[componentId] = {
-            count,
-            name: normalizeBrickKey(Number(cw), Number(cd), Number(cden)),
-          }
-        }
-
-        if (totalAreaFromComponents !== Number(area)) {
-          return NextResponse.json(
-            {
-              error: "Invalid brick components for kind=0 rectangle. Component area does not match target area.",
-              expectedArea: Number(area),
-              componentArea: totalAreaFromComponents,
-            },
-            { status: 400 },
-          )
-        }
-
-        canonicalComponentBuildIds = sorted.map(([id]) => id)
-        canonicalComponentCounts = sorted.map(([, count]) => count)
-        canonicalComposition = compositionObj
       }
     }
 
