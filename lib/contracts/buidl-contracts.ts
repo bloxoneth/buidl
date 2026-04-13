@@ -521,7 +521,6 @@ export async function simulateMint(
   from: string,
 ): Promise<{ success: boolean; result: string; decodedError?: string }> {
   const calldata = encodeMintCalldata(params)
-  const signer = await provider.getSigner()
 
   // V3: Quote license costs and include in simulation value
   let totalLicenseCost = 0n
@@ -533,14 +532,15 @@ export async function simulateMint(
     }
   }
 
-  // Use signer.call() which automatically sets from to the signer's address
-  // and properly routes through MetaMask's eth_call
+  // Use a direct JsonRpcProvider for simulation so we get full revert data
+  // (MetaMask's signer.call() often strips revert reasons)
+  const directProvider = new ethers.JsonRpcProvider(RPC_URL)
   try {
-    const result = await signer.call({
+    const result = await directProvider.call({
+      from,
       to: CONTRACTS.BUILD_NFT,
       data: calldata,
       value: FEE_PER_MINT + totalLicenseCost,
-      gasLimit: MINT_GAS_LIMIT, // Match normal mint gas limit to avoid false simulation reverts
     })
     return { success: true, result }
   } catch (err: any) {
