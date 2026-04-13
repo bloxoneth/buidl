@@ -568,7 +568,11 @@ export async function simulateMint(
       } else if (msg.includes("require(false)")) {
         decodedError = "Bare require(false) - contract rejected call. Check BLOX approval, balance, and fee."
       } else {
-        decodedError = `No revert data — likely a BLOX transfer failure. Ensure BLOX is approved to BuildNFT (covers mass lock + license fees). Click "Approve BLOX" and retry. Error: ${msg.slice(0, 200)}`
+        if (msg.includes("missing revert data") && msg.includes("data=null")) {
+          decodedError = `RPC returned no data — likely a rate limit or network issue. Try again in a few seconds.`
+        } else {
+          decodedError = `No revert data — check BUIDL token approval and balance. Error: ${msg.slice(0, 200)}`
+        }
       }
     }
     

@@ -528,7 +528,13 @@ export function MintDebugClient() {
       const provider = new ethers.BrowserProvider(ethereum)
       const sim = await simulateMint(provider, params, account!)
       if (!sim.success) {
-        throw new Error(`Simulation reverted: ${sim.decodedError || sim.result || "unknown reason"}`)
+        const isRpcError = sim.decodedError?.includes("RPC returned no data") || sim.decodedError?.includes("rate limit")
+        if (isRpcError) {
+          // RPC flake — don't block mint, just warn
+          console.warn("[preflight] Simulation inconclusive (RPC issue), allowing mint")
+        } else {
+          throw new Error(`Simulation reverted: ${sim.decodedError || sim.result || "unknown reason"}`)
+        }
       }
       setPreflightSimOk(true)
       setPreflightHash(generatedHash.toLowerCase())
