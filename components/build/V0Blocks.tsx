@@ -62,37 +62,16 @@ function normalizeDimKey(width: number, depth: number): string {
   return `${w}x${d}`
 }
 
+// On-chain BUIDL palette — indices 1-7 match BUIDLRenderer.sol and lib/palette.ts
+// These are the ONLY colours that can be stored on-chain (3-bit encoding, 0=empty).
+import { SELECTABLE_PALETTE, type ColourIndex } from "@/lib/palette"
+
+const BUIDL_COLORS = SELECTABLE_PALETTE.map(c => c.hex)
+
 const COLOR_THEMES = {
-  default: [
-    "#FF3333", // Red
-    "#FF9933", // Orange
-    "#FFCC33", // Yellow
-    "#33CC66", // Green
-    "#33CCFF", // Light Blue
-    "#3366CC", // Dark Blue
-    "#9933CC", // Purple
-    "#333333", // Black
-  ],
-  muted: [
-    "#D67070", // Muted Red
-    "#D69970", // Muted Orange
-    "#D6C670", // Muted Yellow
-    "#70B270", // Muted Green
-    "#70B2B2", // Muted Cyan
-    "#7095CC", // Muted Blue
-    "#9970B2", // Muted Purple
-    "#606060", // Dark Gray
-  ],
-  monochrome: [
-    "#FFFFFF", // White
-    "#DDDDDD", // Light Gray 1
-    "#BBBBBB", // Light Gray 2
-    "#999999", // Mid Gray 1
-    "#777777", // Mid Gray 2
-    "#555555", // Dark Gray 1
-    "#333333", // Dark Gray 2
-    "#1A1A1A", // Near Black
-  ],
+  default: BUIDL_COLORS,
+  muted: BUIDL_COLORS,
+  monochrome: BUIDL_COLORS,
 }
 
 type Mode = "build" | "move" | "erase"
@@ -787,7 +766,7 @@ export default function V0Blocks({
   const [historyIndex, setHistoryIndex] = useState(0)
   const [mode, setMode] = useState<Mode>("build")
   const [theme, setTheme] = useState<Theme>("default")
-  const [colorIndex, setColorIndex] = useState(1)
+  const [colorIndex, setColorIndex] = useState(0) // 0 = Off White (palette index 1)
   const [width, setWidth] = useState(1)
   const [depth, setDepth] = useState(3)
   const [density, setDensity] = useState(1)
@@ -1326,6 +1305,7 @@ export default function V0Blocks({
         id: Date.now().toString(),
         position: [placementX, yPos, placementZ],
         color: ghostBrick.color,
+        colourIndex: (colorIndex + 1) as ColourIndex, // UI index 0-6 → palette index 1-7
         width: ghostBrick.width,
         depth: ghostBrick.depth,
       }
@@ -1807,6 +1787,7 @@ ghostPositionRef.current = { x: snappedX, z: snappedZ }
             id: Date.now().toString(),
             position: [placementX, yPos, placementZ],
             color: ghostBrick.color,
+            colourIndex: (colorIndex + 1) as ColourIndex,
             width: ghostBrick.width,
             depth: ghostBrick.depth,
           }
