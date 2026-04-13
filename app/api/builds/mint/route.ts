@@ -632,9 +632,9 @@ export async function POST(request: NextRequest) {
         AUTO_MARKETPLACE_PUBLISH_ON_MINT &&
         !(marketplaceStatus?.state === "marketplace_live" || marketplacePublish?.ok),
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error saving mint data:", error)
-    return NextResponse.json({ error: "Failed to save mint data" }, { status: 500 })
+    return NextResponse.json({ error: `Failed to save mint data: ${error?.message || "unknown error"}` }, { status: 500 })
   }
 }
 
