@@ -94,11 +94,8 @@ export async function GET() {
       }),
     )
 
-    // Refresh mapping from on-chain truth so stale Redis records
-    // cannot point a spec (e.g. 1x3-D1) to the wrong tokenId.
-    // Use a minimal ABI to avoid ethers selector collisions with duplicate
-    // function aliases in the full BUILD_NFT_ABI.
-    const onChainVerified = new Set<string>()
+    // Refresh mapping from on-chain truth.
+    // Sequential calls to avoid public RPC rate limits.
     try {
       const provider = new ethers.JsonRpcProvider(RPC_URL)
       const scanABI = [
@@ -108,64 +105,27 @@ export async function GET() {
         "function ownerOf(uint256 tokenId) view returns (address)",
       ]
       const buildNFT = new ethers.Contract(CONTRACTS.BUILD_NFT, scanABI, provider)
-      const nextTokenId = await buildNFT.nextTokenId()
-      const chunkSize = 50n
+      const nextTokenId = Number(await buildNFT.nextTokenId())
 
-      for (let start = 1n; start < nextTokenId; start += chunkSize) {
-        const end = start + chunkSize < nextTokenId ? start + chunkSize : nextTokenId
-        const ids: bigint[] = []
-        for (let id = start; id < end; id++) ids.push(id)
-
-        // Check existence via ownerOf (reverts for non-existent tokens)
-        const existsResults = await Promise.allSettled(
-          ids.map((id) => buildNFT.ownerOf(id))
-        )
-        const existingIds: bigint[] = []
-        for (let i = 0; i < ids.length; i++) {
-          if (existsResults[i].status === "fulfilled") existingIds.push(ids[i])
-        }
-
-        if (existingIds.length === 0) continue
-
-        const kindResults = await Promise.allSettled(existingIds.map((id) => buildNFT.kindOf(id)))
-        const brickIds: bigint[] = []
-        const brickTokenIds: string[] = []
-
-        for (let i = 0; i < existingIds.length; i++) {
-          const result = kindResults[i]
-          if (result.status !== "fulfilled") continue
-          if (Number(result.value) !== 0) continue
-          brickIds.push(existingIds[i])
-          brickTokenIds.push(existingIds[i].toString())
-        }
-
-        if (brickIds.length === 0) continue
-
-        const specResults = await Promise.allSettled(brickIds.map((id) => buildNFT.brickSpecOf(id)))
-        for (let i = 0; i < specResults.length; i++) {
-          const result = specResults[i]
-          if (result.status !== "fulfilled") continue
-          const [w, d, dens] = result.value
+      for (let id = 1; id < nextTokenId; id++) {
+        try {
+          await buildNFT.ownerOf(id) // throws if burned/nonexistent
+          const kind = Number(await buildNFT.kindOf(id))
+          if (kind !== 0) continue
+          const [w, d, dens] = await buildNFT.brickSpecOf(id)
           const spec = normalizeBrickKey(Number(w), Number(d), Number(dens))
           mintedSet.add(spec)
-          onChainVerified.add(spec)
-          // On-chain truth should override any stale Redis-derived mapping.
-          brickSpecToTokenId[spec] = brickTokenIds[i]
+          brickSpecToTokenId[spec] = String(id)
           if (Number(w) === 1 && Number(d) === 1) {
-            baseBrickTokensByDensity[String(Number(dens))] = brickTokenIds[i]
+            baseBrickTokensByDensity[String(Number(dens))] = String(id)
           }
-        }
-      }
-
-      // Prune only Redis-derived entries that were NOT verified on-chain.
-      for (const [spec] of Object.entries(brickSpecToTokenId)) {
-        if (!onChainVerified.has(spec)) {
-          delete brickSpecToTokenId[spec]
-          mintedSet.delete(spec)
+        } catch {
+          // token doesn't exist or was burned — skip
         }
       }
     } catch (chainErr) {
-      console.error("Failed on-chain brick scan refresh:", chainErr)
+      console.error("Failed on-chain brick scan:", chainErr)
+      // Don't prune — keep whatever Redis had
     }
     
     return NextResponse.json({ mintedBricks: [...mintedSet], baseBrickTokensByDensity, brickSpecToTokenId })
