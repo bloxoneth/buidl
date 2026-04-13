@@ -1896,60 +1896,69 @@ export function MintDebugClient() {
                 <div className="p-3 bg-[hsl(var(--buidl-bg))] rounded-lg border border-[hsl(var(--buidl-border))]">
                   <p className="text-sm font-medium text-[hsl(var(--buidl-text-primary))] mb-2">Mint Cost</p>
                   <div className="space-y-1 text-xs text-[hsl(var(--buidl-text-secondary))]">
+                    {/* BUIDL Token Costs */}
                     <div className="flex justify-between">
                       <span>Mass Collateral ({debugData.totalBloxMass} mass)</span>
-                      <span>{debugData.totalBloxMass} BLOX</span>
-                    </div>
-                    {contractState.licenseFeeEstimate > 0n && (
-                      <div className="flex justify-between">
-                        <span>License Fees ({Object.keys(compositionMap).length} component type{Object.keys(compositionMap).length !== 1 ? "s" : ""})</span>
-                        <span>{ethers.formatEther(contractState.licenseFeeEstimate)} BLOX</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-xs text-[hsl(var(--buidl-text-tertiary))]">
-                      <span>Mint Fee</span>
-                      <span>{ethers.formatEther(FEE_PER_MINT)} ETH</span>
+                      <span>{debugData.totalBloxMass} BUIDL</span>
                     </div>
                     <Separator className="my-1" />
                     <div className="flex justify-between font-medium text-[hsl(var(--buidl-text-primary))]">
-                      <span>Total BLOX Required</span>
-                      <span>{ethers.formatEther(BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate)} BLOX</span>
+                      <span>Total BUIDL Required</span>
+                      <span>{debugData.totalBloxMass} BUIDL</span>
+                    </div>
+                    {/* ETH Costs */}
+                    <div className="mt-2 pt-2 border-t border-[hsl(var(--buidl-border))]">
+                      <p className="text-xs font-medium text-[hsl(var(--buidl-text-primary))] mb-1">ETH Costs</p>
+                      {contractState.licenseFeeEstimate > 0n && (
+                        <div className="flex justify-between">
+                          <span>License Fees ({Object.keys(compositionMap).length} component type{Object.keys(compositionMap).length !== 1 ? "s" : ""})</span>
+                          <span>{ethers.formatEther(contractState.licenseFeeEstimate)} ETH</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span>Mint Fee</span>
+                        <span>{ethers.formatEther(FEE_PER_MINT)} ETH</span>
+                      </div>
+                      <Separator className="my-1" />
+                      <div className="flex justify-between font-medium text-[hsl(var(--buidl-text-primary))]">
+                        <span>Total ETH Required</span>
+                        <span>{ethers.formatEther(FEE_PER_MINT + contractState.licenseFeeEstimate)} ETH</span>
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* BLOX Balance Warning */}
+              {/* BUIDL Balance Warning */}
               {contractState.bloxBalance !== null && contractState.bloxBalance === 0n && (
                 <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/30">
-                  <p className="text-sm font-medium text-red-400">BLOX Balance is 0</p>
+                  <p className="text-sm font-medium text-red-400">BUIDL Balance is 0</p>
                   <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">
-                    You need {ethers.formatEther(BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate)} BLOX to mint.
-                    The contract locks BLOX tokens during minting.
+                    You need {debugData.totalBloxMass} BUIDL to mint (locked as mass collateral, returned on burn).
                   </p>
                 </div>
               )}
 
               {/* Approve BLOX Button - always show if allowance insufficient */}
               {contractState.bloxAllowance !== null &&
-               contractState.bloxAllowance < BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate && (
+               contractState.bloxAllowance < BigInt(debugData.totalBloxMass) * 10n ** 18n && (
                 <Button
                   onClick={handleApproveBlox}
                   disabled={approving || !isConnected}
                   className="w-full bg-blue-600 hover:bg-blue-700"
                 >
                   {approving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                  {approving ? "Approving..." : `Approve BLOX (${ethers.formatEther(BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate)} BLOX)`}
+                  {approving ? "Approving..." : `Approve BUIDL (${debugData.totalBloxMass} BUIDL)`}
                 </Button>
               )}
 
               {/* Approve status */}
               {contractState.bloxAllowance !== null &&
-               contractState.bloxAllowance >= BigInt(debugData.totalBloxMass) * 10n ** 18n + contractState.licenseFeeEstimate && (
+               contractState.bloxAllowance >= BigInt(debugData.totalBloxMass) * 10n ** 18n && (
                 <div className="p-3 bg-green-500/10 rounded-lg border border-green-500/30">
                   <p className="text-sm text-green-400 flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4" />
-                    BLOX Approved ({ethers.formatEther(contractState.bloxAllowance)} BLOX)
+                    BUIDL Approved ({ethers.formatEther(contractState.bloxAllowance)} BUIDL)
                   </p>
                 </div>
               )}
@@ -1960,7 +1969,7 @@ export function MintDebugClient() {
                     Component licenses handled automatically at mint time
                   </p>
                   <p className="text-xs text-[hsl(var(--buidl-text-tertiary))] mt-1">
-                    {componentTokenIds.length} component type(s) — BLOX fee for licenses included in mint tx
+                    {componentTokenIds.length} component type(s) — ETH license fee included in mint tx
                   </p>
                 </div>
               )}
